@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { openUrl } from '@tauri-apps/plugin-opener'
 
 export type ServiceId = 'opencode' | 'codex'
 
@@ -7,39 +8,56 @@ export interface ServiceStatus {
   codex: boolean
 }
 
-export const SERVICE_META: Record<ServiceId, {
-  title: string
-  description: string
-  icon: string
-  installCommand: string
-}> = {
+export interface HiveModel {
+  id: string
+  model_type: string
+}
+
+export const SERVICE_META: Record<
+  ServiceId,
+  {
+    title: string
+    description: string
+    icon: string
+    downloadUrl: string
+  }
+> = {
   opencode: {
     title: 'OpenCode',
-    description: 'Agente di coding in terminale. Si avvia con configurazione inline puntata ad AI Hive.',
+    description: "IDE di coding di OpenCode. Scarica e installa l'app, poi riprova.",
     icon: 'i-simple-icons-opencode',
-    installCommand: 'npm i -g opencode-ai'
+    downloadUrl: 'https://opencode.ai/download'
   },
   codex: {
     title: 'Codex',
-    description: 'CLI di coding di OpenAI. Usa un profilo dedicato (~/.codex/hive.config.toml) puntato ad AI Hive.',
+    description: 'CLI di coding di OpenAI. Usa un profilo dedicato puntato ad AI Hive.',
     icon: 'i-simple-icons-openai',
-    installCommand: 'npm i -g @openai/codex'
+    downloadUrl: 'https://chatgpt.com/codex'
   }
 }
 
+const isTauri = computed(() => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window)
+
+const key = ref('')
+const keySaved = ref(false)
+const saving = ref(false)
+const models = ref<HiveModel[]>([])
+const selectedModel = ref('')
+
+// Only TEXT_GENERATION models make sense as an LLM; fall back to the full
+// list if the gateway ever stops reporting the type.
+const chatModels = computed(() => {
+  const text = models.value.filter(m => m.model_type === 'TEXT_GENERATION')
+  return text.length > 0 ? text : models.value
+})
+const chatModelIds = computed(() => chatModels.value.map(m => m.id))
+const status = ref<ServiceStatus | null>(null)
+const refreshing = ref(false)
+const launching = ref<ServiceId | null>(null)
+const keyModalOpen = ref(false)
+
 export function useHive() {
   const toast = useToast()
-
-  const isTauri = computed(() => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window)
-
-  const key = ref('')
-  const keySaved = ref(false)
-  const saving = ref(false)
-  const models = ref<string[]>([])
-  const selectedModel = ref('')
-  const status = ref<ServiceStatus>({ opencode: false, codex: false })
-  const refreshing = ref(false)
-  const launching = ref<ServiceId | null>(null)
 
   async function refreshStatus() {
     if (!isTauri.value || refreshing.value) return
@@ -70,9 +88,11 @@ export function useHive() {
   async function loadModels() {
     if (!key.value.trim()) return
     try {
-      models.value = await invoke<string[]>('list_hive_models', { key: key.value.trim() })
-      const first = models.value[0]
-      if (first && !models.value.includes(selectedModel.value)) {
+      models.value = await invoke<HiveModel[]>('list_hive_models', {
+        key: key.value.trim()
+      })
+      const first = chatModelIds.value[0]
+      if (first && !chatModelIds.value.includes(selectedModel.value)) {
         selectedModel.value = first
       }
     } catch (error) {
@@ -84,9 +104,9 @@ export function useHive() {
     }
   }
 
-  async function saveKey() {
+  async function saveKey(): Promise<boolean> {
     const trimmed = key.value.trim()
-    if (!trimmed || saving.value) return
+    if (!trimmed || saving.value) return false
     saving.value = true
     try {
       await invoke('set_hive_key', { key: trimmed })
@@ -98,12 +118,14 @@ export function useHive() {
         description: `${models.value.length} modelli disponibili su AI Hive.`,
         color: 'success'
       })
+      return true
     } catch (error) {
       toast.add({
         title: 'Salvataggio non riuscito',
         description: String(error),
         color: 'error'
       })
+      return false
     } finally {
       saving.value = false
     }
@@ -134,7 +156,7 @@ export function useHive() {
       })
       toast.add({
         title: `${SERVICE_META[service].title} avviato`,
-        description: 'Il processo è stato lanciato con la configurazione AI Hive.',
+
         color: 'success'
       })
       await refreshStatus()
@@ -149,6 +171,14 @@ export function useHive() {
     }
   }
 
+  async function openExternal(url: string) {
+    if (isTauri.value) {
+      await openUrl(url)
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }
+
   return {
     isTauri,
     key,
@@ -159,10 +189,14 @@ export function useHive() {
     status,
     refreshing,
     launching,
+    keyModalOpen,
+    chatModels,
+    chatModelIds,
     refreshStatus,
     loadSavedKey,
     saveKey,
     clearKey,
-    launch
+    launch,
+    openExternal
   }
 }

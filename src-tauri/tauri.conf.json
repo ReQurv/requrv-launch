@@ -5,8 +5,8 @@
   "identifier": "ai.requrv.launch",
   "build": {
     "frontendDist": "../.output/public",
-    "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "bun run dev --bun",
+    "devUrl": "http://localhost:3001",
+    "beforeDevCommand": "bun run dev --port 3001 --bun",
     "beforeBuildCommand": "bun run build --bun"
   },
   "app": {
