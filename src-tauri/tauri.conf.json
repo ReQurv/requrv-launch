@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "requrv-launch",
+  "productName": "ReQurv Launch",
   "version": "0.1.1",
   "identifier": "ai.requrv.launch",
   "build": {
