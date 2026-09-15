@@ -1,64 +1,98 @@
-# Nuxt Starter Template
+# ReQurv Launch
 
-[![Nuxt UI](https://img.shields.io/badge/Made%20with-Nuxt%20UI-00DC82?logo=nuxt&labelColor=020420)](https://ui.nuxt.com)
+[![CI](https://img.shields.io/badge/CI-lint%20%2B%20typecheck-00DC82?logo=githubactions)](https://github.com/ReQurv/requrv-launch/actions)
 
-Use this template to get started with [Nuxt UI](https://ui.nuxt.com) quickly.
+ReQurv Launch è un'applicazione desktop che avvia i tuoi agenti di coding AI già configurati per [AI Hive](https://hive.requrv.ai), l'AI Gateway di ReQurv.
 
-- [Live demo](https://starter-template.nuxt.dev/)
-- [Documentation](https://ui.nuxt.com/docs/getting-started/installation/nuxt)
+Attualmente supporta:
 
-<a href="https://starter-template.nuxt.dev/" target="_blank">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://ui.nuxt.com/assets/templates/nuxt/starter-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="https://ui.nuxt.com/assets/templates/nuxt/starter-light.png">
-    <img alt="Nuxt Starter Template" src="https://ui.nuxt.com/assets/templates/nuxt/starter-light.png" width="830" height="466">
-  </picture>
-</a>
+- [OpenCode](https://opencode.ai) — IDE di coding (su macOS avvia l'app desktop, altrove la CLI)
+- [Codex](https://chatgpt.com/codex) — CLI di coding di OpenAI
 
-> The starter template for Vue is on https://github.com/nuxt-ui-templates/starter-vue.
+## Funzionalità
 
-## Quick Start
+- Salvataggio e verifica della chiave API di AI Hive (validata contro il gateway al salvataggio)
+- Elencazione dei modelli disponibili su AI Hive e scelta del modello di default
+- Rilevazione automatica dell'installazione di OpenCode e Codex (con supporto a nvm, Volta, Homebrew, installazioni npm globali e PATH "stale" da registry su Windows)
+- Avvio con un clic:
+  - **OpenCode**: scrive il provider `requrv-hive` nel file di configurazione globale (`~/.config/opencode/opencode.jsonc` o `.json`), preservando le altre impostazioni e creando un backup
+  - **Codex**: crea un profilo dedicato (`~/.codex/hive.config.toml`) con `wire_api = "responses"` e avvia la CLI con `--profile hive` e la variabile `HIVE_API_KEY`
 
-```bash [Terminal]
-npm create nuxt@latest -- -t ui
-```
+Su macOS gli agenti sono applicazioni TUI: l'avvio avviene aprendo uno script nel terminale di sistema, in modo da fornire un TTY reale.
 
-## Deploy your own
+## Requisiti
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-name=starter&repository-url=https%3A%2F%2Fgithub.com%2Fnuxt-ui-templates%2Fstarter&demo-image=https%3A%2F%2Fui.nuxt.com%2Fassets%2Ftemplates%2Fnuxt%2Fstarter-dark.png&demo-url=https%3A%2F%2Fstarter-template.nuxt.dev%2F&demo-title=Nuxt%20Starter%20Template&demo-description=A%20minimal%20template%20to%20get%20started%20with%20Nuxt%20UI.)
+- [Bun](https://bun.sh)
+- [Rust](https://rustup.rs) (per il backend Tauri)
+- Dipendenze di sistema per Tauri: vedi [prerequisiti](https://tauri.app/start/prerequisites/)
 
-## Setup
+## Sviluppo
 
-Make sure to install the dependencies:
-
-```bash
-pnpm install
-```
-
-## Development Server
-
-Start the development server on `http://localhost:3000`:
+Installa le dipendenze:
 
 ```bash
-pnpm dev
+bun install
 ```
 
-## Production
-
-Build the application for production:
+Avvia l'app in modalità sviluppo (Nuxt su `http://localhost:3001` + finestra Tauri):
 
 ```bash
-pnpm build
+bun run tauri dev
 ```
 
-Locally preview production build:
+Per sviluppare solo la parte web (senza Tauri; le funzionalità legate a Tauri sono disattivate automaticamente):
 
 ```bash
-pnpm preview
+bun run dev
 ```
 
-Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
+## Script
 
-## Renovate integration
+| Script              | Descrizione                                              |
+| ------------------- | -------------------------------------------------------- |
+| `bun run dev`       | Server di sviluppo Nuxt (solo web)                       |
+| `bun run build`     | Build di produzione del frontend (SSG)                   |
+| `bun run preview`   | Anteprima locale della build di produzione               |
+| `bun run tauri`     | CLI Tauri (`dev`, `build`, ecc.)                         |
+| `bun run lint`      | ESLint                                                   |
+| `bun run typecheck` | Typecheck con `nuxt typecheck` / `vue-tsc`               |
 
-Install [Renovate GitHub app](https://github.com/apps/renovate/installations/select_target) on your repository and you are good to go.
+Test Rust:
+
+```bash
+cd src-tauri
+cargo test
+```
+
+## Struttura del progetto
+
+```
+app/                  # Frontend Nuxt (UI, composable useHive)
+src-tauri/            # Backend Tauri (comandi, rilevazione servizi, avvio)
+public/               # Asset statici (loghi, favicon)
+```
+
+Comandi Tauri esposti al frontend (`src-tauri/src/commands.rs`):
+
+- `get_hive_key` / `set_hive_key` / `delete_hive_key` — gestione della chiave (memorizzata in `hive.json` nella cartella di configurazione dell'app, con backup `.bak`)
+- `list_hive_models` — elenca i modelli da `GET /models` del gateway
+- `check_services` — rileva se OpenCode e Codex sono installati
+- `launch_service` — configura e avvia il servizio scelto
+
+## Build e release
+
+Build locale dei binary e dei bundle:
+
+```bash
+bun run tauri build
+```
+
+I release sono automatizzati: la CI (`.github/workflows/build.yml`) compila su macOS, Linux e Windows e pubblica un GitHub Release quando viene pushato un tag `v*`.
+
+## CI
+
+La CI (`.github/workflows/ci.yml`) esegue lint e typecheck ad ogni push.
+
+## License
+
+[MIT](./LICENSE)
