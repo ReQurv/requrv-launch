@@ -199,7 +199,10 @@
         />
       </clipPath>
       <clipPath id="61140e0f04">
-        <path d="M 306 37 L 355.84375 37 L 355.84375 86.925781 L 306 86.925781 Z M 306 37 " clip-rule="nonzero" />
+        <path
+          d="M 306 37 L 355.84375 37 L 355.84375 86.925781 L 306 86.925781 Z M 306 37 "
+          clip-rule="nonzero"
+        />
       </clipPath>
       <clipPath id="8c87d4b940">
         <path

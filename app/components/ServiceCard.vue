@@ -18,18 +18,30 @@ const blockReason = computed<string | null>(() => {
 </script>
 
 <template>
-  <UCard :class="canLaunch ? 'ring-1 ring-primary/25' : ''" :ui="{ body: 'flex h-full flex-col gap-4' }">
+  <UCard
+    :class="canLaunch ? 'ring-1 ring-primary/25' : ''"
+    :ui="{ body: 'flex h-full flex-col gap-4' }"
+  >
     <div class="flex items-center justify-between gap-3">
       <div class="flex items-center gap-3">
         <div class="rounded-xl bg-elevated p-3">
-          <UIcon :name="meta.icon" class="size-7" />
+          <UIcon
+            :name="meta.icon"
+            class="size-7"
+          />
         </div>
         <h3 class="text-xl font-semibold">
           {{ meta.title }}
         </h3>
       </div>
-      <UBadge :color="installed ? 'success' : 'neutral'" :variant="installed ? 'subtle' : 'outline'">
-        <UIcon :name="installed ? 'i-lucide-check' : 'i-lucide-x'" class="size-3.5" />
+      <UBadge
+        :color="installed ? 'success' : 'neutral'"
+        :variant="installed ? 'subtle' : 'outline'"
+      >
+        <UIcon
+          :name="installed ? 'i-lucide-check' : 'i-lucide-x'"
+          class="size-3.5"
+        />
         {{ installed ? 'Installato' : 'Non installato' }}
       </UBadge>
     </div>
@@ -39,7 +51,10 @@ const blockReason = computed<string | null>(() => {
     </p>
 
     <div class="mt-auto flex flex-col gap-2">
-      <p v-if="selectedModel" class="text-xs text-dimmed">
+      <p
+        v-if="selectedModel"
+        class="text-xs text-dimmed"
+      >
         Modello: <span class="font-mono text-muted">{{ selectedModel }}</span>
       </p>
 
@@ -62,7 +77,10 @@ const blockReason = computed<string | null>(() => {
         @click="hive.launch(id)"
       />
 
-      <div v-if="blockReason" class="flex justify-center">
+      <div
+        v-if="blockReason"
+        class="flex justify-center"
+      >
         <UButton
           v-if="needsSetup"
           variant="link"
@@ -72,7 +90,10 @@ const blockReason = computed<string | null>(() => {
           trailing-icon="i-lucide-chevron-right"
           @click="keyModalOpen = true"
         />
-        <p v-else class="text-xs text-dimmed">
+        <p
+          v-else
+          class="text-xs text-dimmed"
+        >
           {{ blockReason }}
         </p>
       </div>

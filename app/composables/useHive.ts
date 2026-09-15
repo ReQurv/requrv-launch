@@ -24,7 +24,7 @@ export const SERVICE_META: Record<
 > = {
   opencode: {
     title: 'OpenCode',
-    description: "IDE di coding di OpenCode. Scarica e installa l'app, poi riprova.",
+    description: 'IDE di coding di OpenCode. Scarica e installa l\'app, poi riprova.',
     icon: 'i-simple-icons-opencode',
     downloadUrl: 'https://opencode.ai/download'
   },

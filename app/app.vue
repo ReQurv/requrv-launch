@@ -11,7 +11,7 @@ useHead({
 })
 
 const title = 'ReQurv Launch'
-const description = "Lancia i tuoi agenti AI già configurati per AI Hive, l'AI Gateway di ReQurv."
+const description = 'Lancia i tuoi agenti AI già configurati per AI Hive, l\'AI Gateway di ReQurv.'
 
 useSeoMeta({
   title,
@@ -36,12 +36,17 @@ onMounted(async () => {
       <UHeader>
         <template #left>
           <div class="flex min-w-0 items-center gap-3">
-            <NuxtLink to="/" class="focus-visible:outline-3 outline-primary/25 rounded-md p-1 -ms-1">
+            <NuxtLink
+              to="/"
+              class="focus-visible:outline-3 outline-primary/25 rounded-md p-1 -ms-1"
+            >
               <AppLogo class="w-auto h-10 shrink-0" />
             </NuxtLink>
 
             <div class="min-w-0">
-              <h1 class="text-sm font-semibold leading-tight">ReQurv Launch</h1>
+              <h1 class="text-sm font-semibold leading-tight">
+                ReQurv Launch
+              </h1>
               <p class="hidden truncate text-xs leading-tight text-muted md:block">
                 Lancia i tuoi agenti AI già configurati per AI Hive, l'AI Gateway di ReQurv.
               </p>
@@ -83,7 +88,9 @@ onMounted(async () => {
 
         <template #bottom>
           <UContainer class="flex flex-wrap items-center justify-between gap-3 mt-2">
-            <p class="text-xs text-dimmed">Hai appena installato un servizio? Esegui una nuova rilevazione.</p>
+            <p class="text-xs text-dimmed">
+              Hai appena installato un servizio? Esegui una nuova rilevazione.
+            </p>
             <UButton
               icon="i-lucide-refresh-cw"
               label="Rileva di nuovo"

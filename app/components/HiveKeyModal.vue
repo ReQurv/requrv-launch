@@ -31,7 +31,13 @@ async function onSave() {
           icon="i-lucide-key-round"
           :label="selectedModel ? `Chiave attiva · ${selectedModel}` : 'Chiave attiva'"
         />
-        <UBadge v-else color="warning" variant="subtle" icon="i-lucide-key-round" label="Nessuna chiave salvata" />
+        <UBadge
+          v-else
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-key-round"
+          label="Nessuna chiave salvata"
+        />
 
         <UInput
           v-model="key"
@@ -45,7 +51,10 @@ async function onSave() {
           @trailing-click="showKey = !showKey"
         />
 
-        <p v-if="keySaved && models.length === 0" class="text-xs text-dimmed">
+        <p
+          v-if="keySaved && models.length === 0"
+          class="text-xs text-dimmed"
+        >
           Nessuna voce in /v1/models: la selezione modello resterà vuota.
         </p>
       </div>
@@ -61,7 +70,13 @@ async function onSave() {
           variant="ghost"
           @click="hive.clearKey()"
         />
-        <UButton label="Salva chiave" icon="i-lucide-save" :loading="saving" :disabled="!key.trim()" @click="onSave" />
+        <UButton
+          label="Salva chiave"
+          icon="i-lucide-save"
+          :loading="saving"
+          :disabled="!key.trim()"
+          @click="onSave"
+        />
       </div>
     </template>
   </UModal>
