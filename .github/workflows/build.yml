@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     name: Build (${{ matrix.platform }})
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -37,3 +39,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tauriScript: bun run tauri
+          tagName: v__VERSION__
+          releaseName: v__VERSION__
