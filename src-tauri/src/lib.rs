@@ -20,7 +20,11 @@ pub fn run() {
       commands::delete_hive_key,
       commands::list_hive_models,
       commands::check_services,
-      commands::launch_service
+      commands::launch_service,
+      commands::configure_chatgpt_app,
+      commands::open_chatgpt_app,
+      commands::restart_chatgpt_app,
+      commands::restore_chatgpt_app
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

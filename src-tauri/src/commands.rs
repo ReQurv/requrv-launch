@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tauri::Manager;
@@ -51,7 +51,7 @@ pub fn delete_hive_key(app: tauri::AppHandle) -> Result<(), String> {
   }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct HiveModel {
   pub id: String,
   pub model_type: String,
@@ -104,28 +104,40 @@ pub async fn list_hive_models(key: String) -> Result<Vec<HiveModel>, String> {
   Ok(models)
 }
 
+// Error for a /responses probe status, if any. 4xx from the handler (422
+// validation on the empty body, 401, 405, ...) prove the route exists, so
+// only 404 (route missing) and 5xx (gateway failure) are errors.
+fn probe_error(status: reqwest::StatusCode) -> Option<String> {
+  if status == reqwest::StatusCode::NOT_FOUND {
+    Some(
+      "Codex richiede l'endpoint /responses, che AI Hive non espone (HTTP 404). Riprova più tardi."
+        .into(),
+    )
+  } else if status.is_server_error() {
+    Some(format!("AI Hive ha risposto con lo stato {status}"))
+  } else {
+    None
+  }
+}
+
 // Codex (>= 0.136) accepts only `wire_api = "responses"`, so the gateway must
 // expose POST /responses. Probe it before opening the terminal to fail fast
-// with an actionable message instead of a broken TUI session.
+// with an actionable message instead of a broken TUI session. The gateway
+// routes only POST on that path (HEAD/GET never complete), so the probe POSTs
+// an empty body: it fails server-side validation without invoking a model.
 async fn assert_responses_available(key: &str) -> Result<(), String> {
   let client = reqwest::Client::new();
   let url = format!("{HIVE_OPENAI_BASE_URL}/responses");
   let response = client
-    .head(&url)
+    .post(&url)
     .bearer_auth(key.trim())
+    .json(&serde_json::json!({}))
     .timeout(std::time::Duration::from_secs(10))
     .send()
     .await
     .map_err(|e| format!("Impossibile raggiungere AI Hive: {e}"))?;
-  let status = response.status();
-  if status == reqwest::StatusCode::NOT_FOUND {
-    return Err(
-      "Codex richiede l'endpoint /responses, che AI Hive non espone ancora (HTTP 404). L'aggiornamento del gateway è in corso: riprova più tardi."
-        .into(),
-    );
-  }
-  if !status.is_success() {
-    return Err(format!("AI Hive ha risposto con lo stato {status}"));
+  if let Some(err) = probe_error(response.status()) {
+    return Err(err);
   }
   Ok(())
 }
@@ -134,25 +146,55 @@ async fn assert_responses_available(key: &str) -> Result<(), String> {
 pub struct ServiceStatus {
   pub opencode: bool,
   pub codex: bool,
+  pub opencode_app: bool,
+  pub opencode_cli: bool,
+  pub codex_app: bool,
+  pub codex_cli: bool,
+  pub codex_app_configured: bool,
 }
 
+// Reports every launch target separately so the UI can offer the app/terminal
+// choice only when both destinations exist.
 #[tauri::command]
 pub fn check_services() -> ServiceStatus {
+  let opencode_app = opencode_app_path().is_some();
+  let opencode_cli = find_service_binary("opencode").is_some();
+  let codex_app = chatgpt_app_bundle().is_some();
+  let codex_cli = find_service_binary("codex").is_some() || codex_app_binary().is_some();
+  let codex_app_configured = home_dir().is_some_and(|home| chatgpt_app_configured_in(&home));
   ServiceStatus {
-    opencode: opencode_installed(),
-    codex: find_service_binary("codex").is_some(),
+    opencode: opencode_app || opencode_cli,
+    codex: codex_app || codex_cli,
+    opencode_app,
+    opencode_cli,
+    codex_app,
+    codex_cli,
+    codex_app_configured,
   }
 }
 
-// The opencode launch flow targets the desktop app on macOS, the CLI elsewhere.
-#[cfg(target_os = "macos")]
-fn opencode_installed() -> bool {
-  opencode_app_path().is_some()
-}
-
-#[cfg(not(target_os = "macos"))]
-fn opencode_installed() -> bool {
-  find_service_binary("opencode").is_some()
+// Bin directories of every nvm-managed node version, newest first. GUI apps
+// inherit a minimal PATH, so version-manager installs are probed explicitly.
+fn nvm_bin_dirs() -> Vec<PathBuf> {
+  let Some(home) = home_dir() else {
+    return Vec::new();
+  };
+  let Ok(entries) = std::fs::read_dir(home.join(".nvm").join("versions").join("node")) else {
+    return Vec::new();
+  };
+  let mut dirs: Vec<(String, PathBuf)> = entries
+    .flatten()
+    .filter_map(|entry| {
+      let name = entry.file_name().to_string_lossy().to_string();
+      if name.starts_with('v') {
+        Some((name, entry.path().join("bin")))
+      } else {
+        None
+      }
+    })
+    .collect();
+  dirs.sort_by(|a, b| compare_versions(&b.0, &a.0));
+  dirs.into_iter().map(|(_, path)| path).collect()
 }
 
 // Locate the npm executable, tolerating GUI-launched apps whose PATH misses
@@ -167,22 +209,7 @@ pub fn find_npm() -> Option<PathBuf> {
     PathBuf::from("/usr/local/bin/npm"),
     home.join(".volta").join("bin").join("npm"),
   ];
-  let nvm_versions = home.join(".nvm").join("versions").join("node");
-  if let Ok(entries) = std::fs::read_dir(&nvm_versions) {
-    let mut versions: Vec<(String, PathBuf)> = entries
-      .flatten()
-      .filter_map(|entry| {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('v') {
-          Some((name, entry.path().join("bin").join("npm")))
-        } else {
-          None
-        }
-      })
-      .collect();
-    versions.sort_by(|a, b| compare_versions(&b.0, &a.0));
-    candidates.extend(versions.into_iter().map(|(_, path)| path));
-  }
+  candidates.extend(nvm_bin_dirs().into_iter().map(|dir| dir.join("npm")));
   if let Some(found) = candidates.into_iter().find(|c| c.is_file()) {
     return Some(found);
   }
@@ -402,6 +429,16 @@ fn find_service_binary(service: &str) -> Option<PathBuf> {
     return Some(found);
   }
 
+  // nvm per-version bins (macOS/Linux): the app's PATH may miss them, and the
+  // active prefix is not necessarily the version the CLI was installed on.
+  #[cfg(not(windows))]
+  for dir in nvm_bin_dirs() {
+    let candidate = dir.join(service);
+    if candidate.is_file() {
+      return Some(candidate);
+    }
+  }
+
   // Fallback: nvm4w per-version directories on Windows (%APPDATA%\nvm\v*\).
   #[cfg(windows)]
   if let Ok(appdata) = std::env::var("APPDATA") {
@@ -419,10 +456,12 @@ fn find_service_binary(service: &str) -> Option<PathBuf> {
     }
   }
 
-  // Fallback: active npm global prefix (shim or real binary next to it).
+  // Fallback: active npm global prefix. On Windows the shims sit next to the
+  // prefix, on macOS/Linux the executables live in <prefix>/bin.
   let npm_dir = npm_global_dir()?;
   let npm_candidates: Vec<PathBuf> = match service {
     "opencode" => vec![
+      npm_dir.join("bin").join("opencode"),
       npm_dir.join("opencode.cmd"),
       npm_dir.join("opencode.exe"),
       npm_dir
@@ -431,21 +470,25 @@ fn find_service_binary(service: &str) -> Option<PathBuf> {
         .join("bin")
         .join("opencode.exe"),
     ],
-    "codex" => vec![npm_dir.join("codex.cmd"), npm_dir.join("codex.exe")],
+    "codex" => vec![
+      npm_dir.join("bin").join("codex"),
+      npm_dir.join("codex.cmd"),
+      npm_dir.join("codex.exe"),
+    ],
     _ => return None,
   };
   npm_candidates.into_iter().find(|c| c.is_file())
 }
 
-// Location of the OpenCode desktop bundle (macOS only).
-fn opencode_app_path_in(candidates: &[PathBuf]) -> Option<PathBuf> {
+// Location of a desktop .app bundle among the given candidates.
+fn app_bundle_path_in(candidates: &[PathBuf]) -> Option<PathBuf> {
   candidates.iter().find(|path| path.is_dir()).cloned()
 }
 
 #[cfg(target_os = "macos")]
 fn opencode_app_path() -> Option<PathBuf> {
   let home = home_dir()?;
-  opencode_app_path_in(&[
+  app_bundle_path_in(&[
     PathBuf::from("/Applications/OpenCode.app"),
     home.join("Applications").join("OpenCode.app"),
   ])
@@ -456,8 +499,38 @@ fn opencode_app_path() -> Option<PathBuf> {
   None
 }
 
+// The ChatGPT desktop app (macOS) is what users install as "Codex"; it also
+// ships the codex engine in its resources.
+#[cfg(target_os = "macos")]
+fn chatgpt_app_bundle() -> Option<PathBuf> {
+  let home = home_dir()?;
+  app_bundle_path_in(&[
+    PathBuf::from("/Applications/ChatGPT.app"),
+    home.join("Applications").join("ChatGPT.app"),
+  ])
+}
+
+#[cfg(not(target_os = "macos"))]
+fn chatgpt_app_bundle() -> Option<PathBuf> {
+  None
+}
+
+fn codex_app_binary_in(candidates: &[PathBuf]) -> Option<PathBuf> {
+  candidates
+    .iter()
+    .map(|bundle| bundle.join("Contents").join("Resources").join("codex"))
+    .find(|bin| bin.is_file())
+}
+
+// The codex engine bundled inside ChatGPT.app counts as an installation when
+// the standalone CLI is absent.
+fn codex_app_binary() -> Option<PathBuf> {
+  let bundle = chatgpt_app_bundle()?;
+  codex_app_binary_in(std::slice::from_ref(&bundle))
+}
+
 #[tauri::command]
-pub async fn launch_service(app: tauri::AppHandle, service: String, model: String, key: String) -> Result<(), String> {
+pub async fn launch_service(app: tauri::AppHandle, service: String, model: String, key: String, mode: String) -> Result<(), String> {
   let model = model.trim();
   let key = key.trim();
   if model.is_empty() {
@@ -466,10 +539,14 @@ pub async fn launch_service(app: tauri::AppHandle, service: String, model: Strin
   if key.is_empty() {
     return Err("Chiave Hive non salvata".into());
   }
-  match service.as_str() {
-    "opencode" => launch_opencode(&app, model, key),
-    "codex" => launch_codex(&app, model, key).await,
-    _ => Err(format!("Servizio sconosciuto: {service}")),
+  // ("codex", "app") is not handled here: the ChatGPT app flow needs a
+  // restart confirmation, so the frontend drives it via configure_chatgpt_app,
+  // open_chatgpt_app and restart_chatgpt_app.
+  match (service.as_str(), mode.as_str()) {
+    ("opencode", "app") => launch_opencode_app(model, key),
+    ("opencode", "terminal") => launch_opencode_cli(&app, model, key),
+    ("codex", "terminal") => launch_codex_cli(&app, model, key).await,
+    _ => Err(format!("Avvio non valido: {service} in modalità {mode}")),
   }
 }
 
@@ -614,34 +691,411 @@ fn write_opencode_config(model: &str, key: &str) -> Result<(), String> {
   write_opencode_config_in(&home, model, key).map(|_| ())
 }
 
-fn launch_opencode(app: &tauri::AppHandle, model: &str, key: &str) -> Result<(), String> {
-  // Fail fast on a missing target before touching the user's config file.
-  #[cfg(target_os = "macos")]
+// Opens a desktop .app bundle via LaunchServices.
+#[cfg(target_os = "macos")]
+fn open_app_bundle(bundle: &Path, label: &str) -> Result<(), String> {
+  Command::new("open")
+    .arg(bundle)
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .map(|_| ())
+    .map_err(|e| format!("Impossibile avviare {label}: {e}"))
+}
+
+// Fail fast on a missing bundle before touching the user's config file: the
+// app reads the Hive provider from the global opencode config.
+#[cfg(target_os = "macos")]
+fn launch_opencode_app(model: &str, key: &str) -> Result<(), String> {
+  let bundle = opencode_app_path()
+    .ok_or_else(|| String::from("OpenCode.app non trovato in /Applications: installalo e riprova."))?;
+  write_opencode_config(model, key)?;
+  open_app_bundle(&bundle, "OpenCode.app")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launch_opencode_app(_model: &str, _key: &str) -> Result<(), String> {
+  Err(String::from("L'app OpenCode è disponibile solo su macOS."))
+}
+
+fn launch_opencode_cli(app: &tauri::AppHandle, model: &str, key: &str) -> Result<(), String> {
+  let bin = find_service_binary("opencode")
+    .ok_or_else(|| String::from("OpenCode CLI non trovata. Installala da https://opencode.ai/download."))?;
+  write_opencode_config(model, key)?;
+  launch_cli(app, "opencode", &bin, &[], &[])
+}
+
+// Opens ChatGPT.app. The Hive settings (root config, model catalog, auth) are
+// written by configure_chatgpt_app before the first launch.
+#[tauri::command]
+#[cfg(target_os = "macos")]
+pub fn open_chatgpt_app() -> Result<(), String> {
+  let bundle = chatgpt_app_bundle()
+    .ok_or_else(|| String::from("ChatGPT.app non trovato in /Applications: installalo e riprova."))?;
+  open_app_bundle(&bundle, "ChatGPT.app")
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "macos"))]
+pub fn open_chatgpt_app() -> Result<(), String> {
+  Err(String::from("L'app ChatGPT è disponibile solo su macOS."))
+}
+
+// ---------------------------------------------------------------------------
+// ChatGPT.app (Codex desktop) su AI Hive
+// ---------------------------------------------------------------------------
+// The ChatGPT desktop app reads the same ~/.codex files as the CLI: pointing
+// the root openai_base_url at AI Hive, attaching a generated model catalog and
+// putting the Hive key in auth.json (apikey mode) makes the app use Hive
+// models. The original config.toml/auth.json are backed up (.hive.bak) so the
+// previous setup can be restored.
+const HIVE_CATALOG_FILE: &str = "hive-models.json";
+const HIVE_CONFIG_BACKUP: &str = "config.toml.hive.bak";
+const HIVE_AUTH_BACKUP: &str = "auth.json.hive.bak";
+
+fn codex_dir_in(home: &Path) -> PathBuf {
+  home.join(".codex")
+}
+
+fn codex_config_path_in(home: &Path) -> PathBuf {
+  codex_dir_in(home).join("config.toml")
+}
+
+fn codex_config_backup_path_in(home: &Path) -> PathBuf {
+  codex_dir_in(home).join(HIVE_CONFIG_BACKUP)
+}
+
+fn codex_auth_path_in(home: &Path) -> PathBuf {
+  codex_dir_in(home).join("auth.json")
+}
+
+fn codex_auth_backup_path_in(home: &Path) -> PathBuf {
+  codex_dir_in(home).join(HIVE_AUTH_BACKUP)
+}
+
+fn codex_catalog_path_in(home: &Path) -> PathBuf {
+  codex_dir_in(home).join(HIVE_CATALOG_FILE)
+}
+
+// Catalog entry for the app model picker. The Codex desktop engine's schema
+// is strict, so mirror the full field set ollama ships to ChatGPT (models
+// without thinking metadata get null/empty reasoning fields).
+fn hive_catalog_entry(model: &str, priority: i64) -> serde_json::Value {
+  serde_json::json!({
+    "slug": model,
+    "display_name": model,
+    "description": "Modello ReQurv AI Hive",
+    "default_reasoning_level": null,
+    "supported_reasoning_levels": [],
+    "shell_type": "unified_exec",
+    "visibility": "list",
+    "supported_in_api": true,
+    "priority": priority,
+    "additional_speed_tiers": [],
+    "service_tiers": [],
+    "default_service_tier": null,
+    "availability_nux": null,
+    "upgrade": null,
+    "base_instructions": "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.",
+    "model_messages": null,
+    "include_skills_usage_instructions": true,
+    "include_plugin_usage_instructions": true,
+    "include_apps_usage_instructions": true,
+    "supports_reasoning_summary_parameter": false,
+    "supports_reasoning_summaries": false,
+    "default_reasoning_summary": "auto",
+    "support_verbosity": false,
+    "default_verbosity": null,
+    "apply_patch_tool_type": null,
+    "web_search_tool_type": "text",
+    "truncation_policy": { "mode": "tokens", "limit": 10_000 },
+    "supports_parallel_tool_calls": true,
+    "supports_image_detail_original": false,
+    "context_window": 128_000,
+    "max_context_window": 128_000,
+    "auto_compact_token_limit": null,
+    "effective_context_window_percent": 95,
+    "experimental_supported_tools": [],
+    "input_modalities": ["text"],
+    "supports_search_tool": true
+  })
+}
+
+// Catalog for the app picker: only TEXT_GENERATION models; fall back to the
+// full list if the gateway stops reporting the type (same rule as the UI).
+fn build_hive_catalog(models: &[HiveModel]) -> serde_json::Value {
+  let text: Vec<&HiveModel> = models.iter().filter(|m| m.model_type == "TEXT_GENERATION").collect();
+  let picked: Vec<&HiveModel> = if text.is_empty() {
+    models.iter().collect()
+  } else {
+    text
+  };
+  let entries = picked
+    .iter()
+    .enumerate()
+    .map(|(i, m)| hive_catalog_entry(&m.id, i as i64))
+    .collect::<Vec<_>>();
+  serde_json::json!({ "models": entries })
+}
+
+// True when the codex config is pointed at AI Hive by this launcher.
+fn chatgpt_app_configured_in(home: &Path) -> bool {
+  let Ok(raw) = std::fs::read_to_string(codex_config_path_in(home)) else {
+    return false;
+  };
+  let Ok(table) = raw.parse::<toml::Table>() else {
+    return false;
+  };
+  table.get("openai_base_url").and_then(|v| v.as_str()) == Some(HIVE_OPENAI_BASE_URL)
+    && table
+      .get("model_catalog_json")
+      .and_then(|v| v.as_str())
+      == Some(codex_catalog_path_in(home).to_string_lossy().as_ref())
+}
+
+// Back up (once) and rewrite the codex config, catalog and auth so the
+// ChatGPT app talks to AI Hive. Every other root key is preserved; files that
+// cannot be parsed are left untouched.
+fn configure_chatgpt_app_in(home: &Path, model: &str, models: &[HiveModel], key: &str) -> Result<(), String> {
+  let dir = codex_dir_in(home);
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+  let catalog_path = codex_catalog_path_in(home);
+  let catalog = build_hive_catalog(models);
+  let rendered = serde_json::to_string_pretty(&catalog).map_err(|e| e.to_string())?;
+  std::fs::write(&catalog_path, rendered + "\n")
+    .map_err(|e| format!("Impossibile scrivere {}: {e}", catalog_path.display()))?;
+
+  let config_path = codex_config_path_in(home);
+  let backup_path = codex_config_backup_path_in(home);
+  let mut table: toml::Table = if config_path.exists() {
+    let raw = std::fs::read_to_string(&config_path)
+      .map_err(|e| format!("Impossibile leggere {}: {e}", config_path.display()))?;
+    if !backup_path.exists() {
+      let _ = std::fs::write(&backup_path, raw.as_str());
+    }
+    raw.parse().map_err(|e| {
+      format!("{} non è un TOML valido: {e}. Correggi il file e riprova.", config_path.display())
+    })?
+  } else {
+    toml::Table::new()
+  };
+  table.insert("model".into(), toml::Value::String(model.to_string()));
+  table.insert("openai_base_url".into(), toml::Value::String(HIVE_OPENAI_BASE_URL.into()));
+  table.insert("model_catalog_json".into(), toml::Value::String(catalog_path.to_string_lossy().into_owned()));
+  let rendered = toml::to_string(&table).map_err(|e| e.to_string())?;
+  std::fs::write(&config_path, rendered)
+    .map_err(|e| format!("Impossibile scrivere {}: {e}", config_path.display()))?;
+
+  // The app authenticates through auth.json: the Hive key goes in apikey mode,
+  // keeping the previous content in .bak for the restore.
+  let auth_path = codex_auth_path_in(home);
+  let auth_backup = codex_auth_backup_path_in(home);
+  if auth_path.exists() && !auth_backup.exists() {
+    let raw = std::fs::read_to_string(&auth_path)
+      .map_err(|e| format!("Impossibile leggere {}: {e}", auth_path.display()))?;
+    let _ = std::fs::write(&auth_backup, raw.as_str());
+  }
+  let auth = serde_json::json!({
+    "OPENAI_API_KEY": key,
+    "auth_mode": "apikey"
+  });
+  let rendered = serde_json::to_string_pretty(&auth).map_err(|e| e.to_string())?;
+  std::fs::write(&auth_path, rendered + "\n")
+    .map_err(|e| format!("Impossibile scrivere {}: {e}", auth_path.display()))?;
+  #[cfg(unix)]
   {
-    let _ = app;
-    let bundle = opencode_app_path()
-      .ok_or_else(|| String::from("OpenCode.app non trovato in /Applications: installalo e riprova."))?;
-    write_opencode_config(model, key)?;
-    Command::new("open")
-      .arg(&bundle)
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(&auth_path, std::fs::Permissions::from_mode(0o600));
+  }
+
+  Ok(())
+}
+
+// Undo the Hive configuration: restore the backed-up files, or strip the root
+// keys and the apikey auth managed by this launcher when no backup exists. A
+// ChatGPT OAuth auth.json is never touched.
+fn restore_chatgpt_app_in(home: &Path, key: &str) -> Result<(), String> {
+  let config_path = codex_config_path_in(home);
+  let backup_path = codex_config_backup_path_in(home);
+  let mut strip_catalog = false;
+
+  if config_path.exists() || backup_path.exists() {
+    if backup_path.exists() {
+      let raw = std::fs::read_to_string(&backup_path)
+        .map_err(|e| format!("Impossibile leggere {}: {e}", backup_path.display()))?;
+      std::fs::write(&config_path, raw)
+        .map_err(|e| format!("Impossibile scrivere {}: {e}", config_path.display()))?;
+      std::fs::remove_file(&backup_path).map_err(|e| e.to_string())?;
+      strip_catalog = true;
+    } else {
+      let raw = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Impossibile leggere {}: {e}", config_path.display()))?;
+      let mut table: toml::Table = raw.parse().map_err(|e| {
+        format!("{} non è un TOML valido: {e}. Correggi il file e riprova.", config_path.display())
+      })?;
+      let is_hive = table.get("openai_base_url").and_then(|v| v.as_str()) == Some(HIVE_OPENAI_BASE_URL);
+      if is_hive {
+        table.remove("model");
+        table.remove("openai_base_url");
+        table.remove("model_catalog_json");
+        if table.is_empty() {
+          std::fs::remove_file(&config_path).map_err(|e| e.to_string())?;
+        } else {
+          let rendered = toml::to_string(&table).map_err(|e| e.to_string())?;
+          std::fs::write(&config_path, rendered)
+            .map_err(|e| format!("Impossibile scrivere {}: {e}", config_path.display()))?;
+        }
+        strip_catalog = true;
+      }
+    }
+  }
+
+  let auth_path = codex_auth_path_in(home);
+  let auth_backup = codex_auth_backup_path_in(home);
+  if auth_path.exists() {
+    if auth_backup.exists() {
+      let raw = std::fs::read_to_string(&auth_backup)
+        .map_err(|e| format!("Impossibile leggere {}: {e}", auth_backup.display()))?;
+      std::fs::write(&auth_path, raw)
+        .map_err(|e| format!("Impossibile scrivere {}: {e}", auth_path.display()))?;
+      std::fs::remove_file(&auth_backup).map_err(|e| e.to_string())?;
+    } else if let Ok(raw) = std::fs::read_to_string(&auth_path) {
+      // Without a backup the auth was created by this launcher: remove it only
+      // while it still holds the Hive key, never a user login or other key.
+      let is_ours = serde_json::from_str::<serde_json::Value>(&raw)
+        .map(|v| {
+          v.get("auth_mode").and_then(|m| m.as_str()) == Some("apikey")
+            && v.get("OPENAI_API_KEY").and_then(|k| k.as_str()) == Some(key)
+        })
+        .unwrap_or(false);
+      if is_ours {
+        std::fs::remove_file(&auth_path).map_err(|e| e.to_string())?;
+      }
+    }
+  }
+
+  if strip_catalog {
+    let _ = std::fs::remove_file(codex_catalog_path_in(home));
+  }
+
+  Ok(())
+}
+
+// The model catalog is read at startup, so a running instance keeps the old
+// models until it is restarted.
+#[cfg(target_os = "macos")]
+fn chatgpt_app_running() -> bool {
+  Command::new("pgrep")
+    .args(["-x", "ChatGPT"])
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .status()
+    .is_ok_and(|s| s.success())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn chatgpt_app_running() -> bool {
+  false
+}
+
+// Quit ChatGPT (gracefully, then forcefully) and relaunch it so the app picks
+// up the new model catalog.
+#[cfg(target_os = "macos")]
+fn quit_and_reopen_chatgpt() -> Result<(), String> {
+  let bundle = chatgpt_app_bundle()
+    .ok_or_else(|| String::from("ChatGPT.app non trovato in /Applications: installalo e riprova."))?;
+  if chatgpt_app_running() {
+    Command::new("osascript")
+      .args(["-e", "tell application \"ChatGPT\" to quit"])
       .stdin(Stdio::null())
       .stdout(Stdio::null())
       .stderr(Stdio::null())
       .spawn()
       .map(|_| ())
-      .map_err(|e| format!("Impossibile avviare OpenCode.app: {e}"))
+      .map_err(|e| format!("Impossibile chiudere ChatGPT: {e}"))?;
+    // Graceful quit can take a moment; give it a chance before forcing.
+    for _ in 0..20 {
+      if !chatgpt_app_running() {
+        break;
+      }
+      std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    if chatgpt_app_running() {
+      Command::new("pkill")
+        .args(["-x", "ChatGPT"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Impossibile chiudere ChatGPT: {e}"))?;
+      for _ in 0..10 {
+        if !chatgpt_app_running() {
+          break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+      }
+    }
   }
-  #[cfg(not(target_os = "macos"))]
-  {
-    let bin = find_service_binary("opencode")
-      .ok_or_else(|| String::from("OpenCode non è installato. Scaricalo da https://opencode.ai/download."))?;
-    write_opencode_config(model, key)?;
-    launch_cli(app, "opencode", &bin, &[], &[])
-  }
+  open_app_bundle(&bundle, "ChatGPT.app")
 }
 
-async fn launch_codex(app: &tauri::AppHandle, model: &str, key: &str) -> Result<(), String> {
+#[cfg(not(target_os = "macos"))]
+fn quit_and_reopen_chatgpt() -> Result<(), String> {
+  Err(String::from("L'app ChatGPT è disponibile solo su macOS."))
+}
+
+#[derive(Serialize)]
+pub struct ChatgptAppResult {
+  pub restart_required: bool,
+}
+
+// Point ChatGPT.app at AI Hive (config, catalog, auth) and report whether a
+// running instance needs a restart to load the new catalog.
+#[tauri::command]
+pub async fn configure_chatgpt_app(model: String, key: String, models: Vec<HiveModel>) -> Result<ChatgptAppResult, String> {
+  let model = model.trim();
+  let key = key.trim();
+  if model.is_empty() {
+    return Err("Nessun modello selezionato".into());
+  }
+  if key.is_empty() {
+    return Err("Chiave Hive non salvata".into());
+  }
+  if models.is_empty() {
+    return Err("Nessun modello disponibile da AI Hive".into());
+  }
+  assert_responses_available(key).await?;
+  let home = home_dir().ok_or_else(|| "Home directory non trovata".to_string())?;
+  configure_chatgpt_app_in(&home, model, &models, key)?;
+  Ok(ChatgptAppResult {
+    restart_required: chatgpt_app_running(),
+  })
+}
+
+#[tauri::command]
+pub fn restart_chatgpt_app() -> Result<(), String> {
+  quit_and_reopen_chatgpt()
+}
+
+// Restore the original ChatGPT setup (config.toml, auth.json, catalog) and
+// report whether a running instance needs a restart to pick it up.
+#[tauri::command]
+pub fn restore_chatgpt_app(app: tauri::AppHandle) -> Result<ChatgptAppResult, String> {
+  let home = home_dir().ok_or_else(|| "Home directory non trovata".to_string())?;
+  let key = get_hive_key(app).ok().flatten().unwrap_or_default();
+  restore_chatgpt_app_in(&home, &key)?;
+  Ok(ChatgptAppResult {
+    restart_required: chatgpt_app_running(),
+  })
+}
+
+async fn launch_codex_cli(app: &tauri::AppHandle, model: &str, key: &str) -> Result<(), String> {
   let bin = find_service_binary("codex")
+    .or_else(codex_app_binary)
     .ok_or_else(|| String::from("Codex non è installato. Scaricalo da https://chatgpt.com/codex."))?;
 
   assert_responses_available(key).await?;
@@ -863,6 +1317,26 @@ mod tests {
     assert!(script.contains("'/Users/x/.nvm/versions/node/v24/bin/codex' '--profile' 'hive'"));
   }
 
+  // Il gateway risponde 422 al POST di prova con corpo vuoto (validazione del
+  // body prima dell'invocazione del modello): qualsiasi 4xx dal handler prova
+  // che il percorso /responses esiste. Solo 404 e 5xx bloccano l'avvio.
+  #[test]
+  fn probe_treats_handler_rejections_as_available() {
+    for status in [
+      reqwest::StatusCode::OK,
+      reqwest::StatusCode::UNAUTHORIZED,
+      reqwest::StatusCode::FORBIDDEN,
+      reqwest::StatusCode::METHOD_NOT_ALLOWED,
+      reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+      reqwest::StatusCode::TOO_MANY_REQUESTS,
+    ] {
+      assert_eq!(probe_error(status), None, "status {status}");
+    }
+    assert!(probe_error(reqwest::StatusCode::NOT_FOUND).is_some());
+    assert!(probe_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR).is_some());
+    assert!(probe_error(reqwest::StatusCode::BAD_GATEWAY).is_some());
+  }
+
   // Simula un processo con PATH vecchio/stripped (es. app lanciata da un
   // explorer partito prima dell'aggiornamento PATH): su Windows la
   // rilevazione deve comunque funzionare leggendo il PATH dal registry.
@@ -883,6 +1357,30 @@ mod tests {
     if cfg!(windows) {
       assert!(bin.is_some(), "opencode non trovato con PATH strippato");
     }
+  }
+
+  // Simula un'installazione under nvm con PATH minimo e HOME fittizia (app
+  // lanciata dal Dock/Finder): la rilevazione deve trovare il bin nella
+  // directory bin della versione node, senza passare dal PATH.
+  #[cfg(not(windows))]
+  #[test]
+  fn finds_codex_in_nvm_bin_with_minimal_path() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-nvm-{}", std::process::id()));
+    let bin_dir = tmp.join(".nvm").join("versions").join("node").join("v24.0.0").join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("create fake nvm bin");
+    let fake = bin_dir.join("codex");
+    std::fs::write(&fake, "#!/bin/sh\n").expect("write fake codex");
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let original_home = std::env::var("HOME").unwrap_or_default();
+    std::env::set_var("PATH", "/usr/bin:/bin");
+    std::env::set_var("HOME", &tmp);
+    let bin = find_service_binary("codex");
+    std::env::set_var("PATH", &original_path);
+    std::env::set_var("HOME", &original_home);
+
+    assert_eq!(bin, Some(fake));
+    let _ = std::fs::remove_dir_all(&tmp);
   }
 
   #[test]
@@ -991,16 +1489,198 @@ mod tests {
   }
 
   #[test]
-  fn finds_opencode_app_bundle_among_candidates() {
+  fn finds_desktop_app_bundle_among_candidates() {
     let tmp = std::env::temp_dir().join(format!("requrv-launch-test-app-{}", std::process::id()));
     let bundle = tmp.join("OpenCode.app");
     std::fs::create_dir_all(&bundle).expect("create fake bundle");
     let missing = tmp.join("Assente.app");
+    assert_eq!(app_bundle_path_in(&[missing.clone(), bundle.clone()]), Some(bundle));
+    assert_eq!(app_bundle_path_in(&[missing]), None);
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn finds_chatgpt_bundle_among_candidates() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-bundle-{}", std::process::id()));
+    let bundle = tmp.join("ChatGPT.app");
+    std::fs::create_dir_all(&bundle).expect("create fake bundle");
+    let missing = tmp.join("Assente.app");
+    assert_eq!(app_bundle_path_in(&[missing.clone(), bundle.clone()]), Some(bundle));
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn finds_codex_binary_in_chatgpt_bundle() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-{}", std::process::id()));
+    let resources = tmp.join("ChatGPT.app").join("Contents").join("Resources");
+    std::fs::create_dir_all(&resources).expect("create fake bundle");
+    std::fs::write(resources.join("codex"), "fake").expect("write fake codex");
+    let bundle = tmp.join("ChatGPT.app");
+    let expected = bundle.join("Contents").join("Resources").join("codex");
+    let missing = tmp.join("Assente.app");
+    assert_eq!(codex_app_binary_in(&[missing.clone(), bundle.clone()]), Some(expected));
+    assert_eq!(codex_app_binary_in(&[missing]), None);
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn builds_hive_model_catalog_with_text_models_only() {
+    let models = vec![
+      HiveModel { id: "model-a".into(), model_type: "TEXT_GENERATION".into() },
+      HiveModel { id: "image-x".into(), model_type: "IMAGE_GENERATION".into() },
+      HiveModel { id: "model-b".into(), model_type: "TEXT_GENERATION".into() },
+    ];
+    let catalog = build_hive_catalog(&models);
+    let entries = catalog["models"].as_array().expect("models array");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["slug"], "model-a");
+    assert_eq!(entries[1]["slug"], "model-b");
+    assert_eq!(entries[0]["display_name"], "model-a");
+    assert_eq!(entries[0]["supported_in_api"], true);
+    assert_eq!(entries[0]["context_window"], 128_000);
+    // The app schema requires the reasoning fields even when empty.
+    assert_eq!(entries[0]["supported_reasoning_levels"].as_array().unwrap().len(), 0);
+    assert!(entries[0].get("default_reasoning_level").is_some());
+  }
+
+  #[test]
+  fn hive_catalog_falls_back_to_full_list_without_type() {
+    let models = vec![HiveModel { id: "model-x".into(), model_type: String::new() }];
+    let catalog = build_hive_catalog(&models);
+    assert_eq!(catalog["models"].as_array().expect("models array").len(), 1);
+  }
+
+  #[test]
+  fn configure_chatgpt_app_writes_config_catalog_auth_and_backups() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-cfg-{}", std::process::id()));
+    let dir = tmp.join(".codex");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let original_config = "model = \"gpt-5-codex\"\nnotify = [\"bar\"]\n[desktop]\ntheme = \"dark\"\n";
+    let original_auth = r#"{"auth_mode": "chatgpt"}"#;
+    std::fs::write(dir.join("config.toml"), original_config).expect("write config");
+    std::fs::write(dir.join("auth.json"), original_auth).expect("write auth");
+
+    let models = vec![HiveModel { id: "model-a".into(), model_type: "TEXT_GENERATION".into() }];
+    configure_chatgpt_app_in(&tmp, "model-a", &models, "requrv_sk_test").expect("configure");
+
+    let rendered = std::fs::read_to_string(dir.join("config.toml")).expect("read config back");
+    let value: toml::Table = rendered.parse().expect("valid toml");
+    assert_eq!(value.get("model").and_then(|v| v.as_str()), Some("model-a"));
+    assert_eq!(value.get("openai_base_url").and_then(|v| v.as_str()), Some(HIVE_OPENAI_BASE_URL));
+    assert!(value
+      .get("model_catalog_json")
+      .and_then(|v| v.as_str())
+      .unwrap()
+      .ends_with("hive-models.json"));
+    assert_eq!(value.get("notify").and_then(|v| v.as_array()).unwrap()[0].as_str(), Some("bar"));
     assert_eq!(
-      opencode_app_path_in(&[missing.clone(), bundle.clone()]),
-      Some(bundle)
+      value.get("desktop").and_then(|v| v.as_table()).and_then(|t| t.get("theme")).and_then(|v| v.as_str()),
+      Some("dark")
     );
-    assert_eq!(opencode_app_path_in(&[missing]), None);
+
+    let catalog_raw = std::fs::read_to_string(dir.join("hive-models.json")).expect("read catalog");
+    let catalog: serde_json::Value = serde_json::from_str(&catalog_raw).expect("valid catalog");
+    assert_eq!(catalog["models"][0]["slug"], "model-a");
+
+    let auth_raw = std::fs::read_to_string(dir.join("auth.json")).expect("read auth back");
+    let auth: serde_json::Value = serde_json::from_str(&auth_raw).expect("valid auth");
+    assert_eq!(auth["auth_mode"], "apikey");
+    assert_eq!(auth["OPENAI_API_KEY"], "requrv_sk_test");
+
+    assert_eq!(
+      std::fs::read_to_string(dir.join("config.toml.hive.bak")).expect("config backup"),
+      original_config
+    );
+    assert_eq!(
+      std::fs::read_to_string(dir.join("auth.json.hive.bak")).expect("auth backup"),
+      original_auth
+    );
+
+    assert!(chatgpt_app_configured_in(&tmp));
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn configure_twice_keeps_the_original_backup() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-again-{}", std::process::id()));
+    let dir = tmp.join(".codex");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let original = "model = \"gpt-5-codex\"\n";
+    std::fs::write(dir.join("config.toml"), original).expect("write config");
+
+    let models = vec![
+      HiveModel { id: "model-a".into(), model_type: "TEXT_GENERATION".into() },
+      HiveModel { id: "model-b".into(), model_type: "TEXT_GENERATION".into() },
+    ];
+    configure_chatgpt_app_in(&tmp, "model-a", &models, "requrv_sk_test").expect("first configure");
+    configure_chatgpt_app_in(&tmp, "model-b", &models, "requrv_sk_other").expect("second configure");
+
+    let value: toml::Table = std::fs::read_to_string(dir.join("config.toml")).expect("read back").parse().expect("valid toml");
+    assert_eq!(value.get("model").and_then(|v| v.as_str()), Some("model-b"));
+    assert_eq!(std::fs::read_to_string(dir.join("config.toml.hive.bak")).expect("original backup"), original);
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn restore_chatgpt_app_roundtrip() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-restore-{}", std::process::id()));
+    let dir = tmp.join(".codex");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let original_config = "model = \"gpt-5-codex\"\n";
+    let original_auth = r#"{"auth_mode": "chatgpt"}"#;
+    std::fs::write(dir.join("config.toml"), original_config).expect("write config");
+    std::fs::write(dir.join("auth.json"), original_auth).expect("write auth");
+
+    let models = vec![HiveModel { id: "model-a".into(), model_type: "TEXT_GENERATION".into() }];
+    configure_chatgpt_app_in(&tmp, "model-a", &models, "requrv_sk_test").expect("configure");
+    restore_chatgpt_app_in(&tmp, "requrv_sk_test").expect("restore");
+
+    assert_eq!(std::fs::read_to_string(dir.join("config.toml")).expect("config restored"), original_config);
+    assert_eq!(std::fs::read_to_string(dir.join("auth.json")).expect("auth restored"), original_auth);
+    assert!(!dir.join("config.toml.hive.bak").exists());
+    assert!(!dir.join("auth.json.hive.bak").exists());
+    assert!(!dir.join("hive-models.json").exists());
+    assert!(!chatgpt_app_configured_in(&tmp));
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn restore_without_backup_strips_hive_keys_and_own_auth() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-strip-{}", std::process::id()));
+    let dir = tmp.join(".codex");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let configured = format!(
+      "model = \"model-a\"\nnotify = [\"bar\"]\nopenai_base_url = \"{HIVE_OPENAI_BASE_URL}\"\nmodel_catalog_json = \"{}\"\n",
+      dir.join("hive-models.json").display()
+    );
+    std::fs::write(dir.join("config.toml"), configured).expect("write config");
+    std::fs::write(dir.join("auth.json"), r#"{"OPENAI_API_KEY": "requrv_sk_test", "auth_mode": "apikey"}"#)
+      .expect("write auth");
+
+    restore_chatgpt_app_in(&tmp, "requrv_sk_test").expect("restore");
+
+    let value: toml::Table = std::fs::read_to_string(dir.join("config.toml")).expect("config kept").parse().expect("valid toml");
+    assert!(value.get("model").is_none());
+    assert!(value.get("openai_base_url").is_none());
+    assert!(value.get("model_catalog_json").is_none());
+    assert_eq!(value.get("notify").and_then(|v| v.as_array()).unwrap()[0].as_str(), Some("bar"));
+    assert!(!dir.join("auth.json").exists());
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn restore_without_backup_keeps_foreign_auth() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-auth-{}", std::process::id()));
+    let dir = tmp.join(".codex");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let configured = format!("model = \"model-a\"\nopenai_base_url = \"{HIVE_OPENAI_BASE_URL}\"\n");
+    std::fs::write(dir.join("config.toml"), configured).expect("write config");
+    let foreign_auth = r#"{"OPENAI_API_KEY": "sk-altra-chiave", "auth_mode": "apikey"}"#;
+    std::fs::write(dir.join("auth.json"), foreign_auth).expect("write auth");
+
+    restore_chatgpt_app_in(&tmp, "requrv_sk_test").expect("restore");
+
+    assert_eq!(std::fs::read_to_string(dir.join("auth.json")).expect("auth kept"), foreign_auth);
     let _ = std::fs::remove_dir_all(&tmp);
   }
 }

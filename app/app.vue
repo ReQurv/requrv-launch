@@ -127,5 +127,7 @@ onMounted(async () => {
     </div>
 
     <HiveKeyModal />
+    <LaunchModal />
+    <RestartModal />
   </UApp>
 </template>

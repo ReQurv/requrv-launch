@@ -19,7 +19,8 @@ Tauri 2 + Nuxt 4 desktop app that launches AI coding agents (OpenCode, Codex) pr
 - Tauri dev server is pinned to port 3001 (`strictPort` in `nuxt.config.ts`, `devUrl` in `tauri.conf.json`). Don't change one without the other.
 - `nuxt.config.ts` ignores `**/src-tauri/**` (EMFILE watch workaround) — don't remove.
 - Hive key is stored as plaintext `hive.json` in the Tauri app config dir (`.bak` written before overwrite); model list comes from `GET https://hive.requrv.ai/api/v1/models`.
-- Launch flows: OpenCode gets a `requrv-hive` provider merged into `~/.config/opencode/opencode.jsonc` (existing fields preserved, JSONC comments stripped, backup made); Codex gets `~/.codex/hive.config.toml` + `--profile hive` and is only launched after probing the gateway's `/responses` endpoint (Codex ≥ 0.136 requires it).
+- Launch flows: OpenCode gets a `requrv-hive` provider merged into `~/.config/opencode/opencode.jsonc` (existing fields preserved, JSONC comments stripped, backup made); Codex CLI gets `~/.codex/hive.config.toml` + `--profile hive` and is only launched after probing the gateway's `/responses` endpoint (Codex ≥ 0.136 requires it).
+- ChatGPT.app (macOS) is configured by a frontend-driven flow (`configure_chatgpt_app` → restart confirmation → `restart_chatgpt_app`/`open_chatgpt_app`): it rewrites the root of `~/.codex/config.toml` (`model`, `openai_base_url`, `model_catalog_json` → `~/.codex/hive-models.json`, other keys preserved via the `toml` crate), sets `~/.codex/auth.json` to apikey mode with the Hive key, keeps one-shot `.hive.bak` backups of both and can fully restore them (`restore_chatgpt_app`, never touches a ChatGPT OAuth auth). The app reads its model catalog at startup, so a running instance needs the restart confirmation; `launch_service` does NOT handle `("codex","app")` on purpose.
 
 ## Conventions
 

@@ -2,12 +2,21 @@
 const props = defineProps<{ id: ServiceId }>()
 
 const hive = useHive()
-const { keySaved, selectedModel, status, launching, keyModalOpen } = hive
+const { keySaved, selectedModel, status, launching, keyModalOpen, restoring } = hive
 
 const meta = computed(() => SERVICE_META[props.id])
 const installed = computed(() => status.value?.[props.id] ?? false)
 const canLaunch = computed(() => keySaved.value && !!selectedModel.value && installed.value)
 const needsSetup = computed(() => !keySaved.value || !selectedModel.value)
+const chatgptConfigured = computed(
+  () => props.id === 'codex' && (status.value?.codex_app ?? false) && (status.value?.codex_app_configured ?? false)
+)
+const restoreModalOpen = ref(false)
+
+function confirmRestore() {
+  restoreModalOpen.value = false
+  void hive.restoreChatgpt()
+}
 
 const blockReason = computed<string | null>(() => {
   if (!keySaved.value) return 'Configura prima la chiave AI Hive.'
@@ -74,7 +83,17 @@ const blockReason = computed<string | null>(() => {
         :disabled="!canLaunch"
         size="lg"
         block
-        @click="hive.launch(id)"
+        @click="hive.requestLaunch(id)"
+      />
+
+      <UButton
+        v-if="chatgptConfigured"
+        label="Ripristina ChatGPT"
+        icon="i-lucide-rotate-ccw"
+        variant="ghost"
+        size="sm"
+        :loading="restoring"
+        @click="restoreModalOpen = true"
       />
 
       <div
@@ -99,4 +118,35 @@ const blockReason = computed<string | null>(() => {
       </div>
     </div>
   </UCard>
+
+  <UModal
+    :open="restoreModalOpen"
+    title="Ripristina ChatGPT"
+    description="Tornare alla configurazione originale di ChatGPT?"
+    :ui="{ content: 'max-w-md' }"
+    @update:open="restoreModalOpen = $event"
+  >
+    <template #body>
+      <p class="text-sm text-muted">
+        Vengono recuperati config.toml e auth.json pre-Hive e ChatGPT tornerà a usare l'account OpenAI.
+      </p>
+    </template>
+
+    <template #footer>
+      <div class="flex items-center justify-end gap-3">
+        <UButton
+          label="Annulla"
+          color="neutral"
+          variant="ghost"
+          @click="restoreModalOpen = false"
+        />
+        <UButton
+          icon="i-lucide-rotate-ccw"
+          label="Ripristina"
+          :loading="restoring"
+          @click="confirmRestore"
+        />
+      </div>
+    </template>
+  </UModal>
 </template>
