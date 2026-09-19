@@ -43,6 +43,14 @@ Download the latest build for your platform from the [Releases page](https://git
 
 You need an AI Hive API key, which you paste into the app once (it is validated against the gateway and stored locally).
 
+### Unsigned builds
+
+The release builds are not code-signed (and not notarized on macOS), so your OS will warn you on first launch. To proceed anyway:
+
+- **macOS**: right-click (Control-click) the app and choose **Open**, then confirm in the dialog — or run `xattr -d com.apple.quarantine /Applications/ReQurv\ Launch.app`
+- **Windows**: when SmartScreen shows "Windows protected your PC", click **More info** → **Run anyway**
+- **Linux**: if the AppImage won't start, grant it execute permission with `chmod +x ReQurv-Launch_*.AppImage`
+
 ## Development
 
 Requirements:
