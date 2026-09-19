@@ -1285,7 +1285,7 @@ fn launch_cli(
   #[cfg(target_os = "macos")]
   {
     let script = build_terminal_script(bin, args, env);
-    return open_terminal_script(app, service, &script);
+    open_terminal_script(app, service, &script)
   }
   #[cfg(not(target_os = "macos"))]
   {

@@ -1,7 +1,8 @@
 {
   "name": "requrv-launch",
-  "private": true,
   "type": "module",
+  "license": "GPL-3.0-or-later",
+  "repository": "https://github.com/ReQurv/requrv-launch",
   "scripts": {
     "build": "nuxt build",
     "dev": "nuxt dev",

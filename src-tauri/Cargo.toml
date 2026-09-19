@@ -1,10 +1,10 @@
 [package]
 name = "app"
 version = "0.1.2"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "Desktop launcher for AI coding agents pre-configured for AI Hive"
+authors = ["ReQurv"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/ReQurv/requrv-launch"
 edition = "2021"
 rust-version = "1.77.2"
 

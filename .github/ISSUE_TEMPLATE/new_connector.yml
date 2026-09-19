@@ -1,0 +1,72 @@
+name: New connector
+description: Propose connecting a new AI coding agent to AI Hive
+labels: [connector]
+title: "Connector: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ReQurv Launch exists so the community can connect more agents to AI Hive. Please fill in what you know — maintainers will help with the rest.
+  - type: input
+    id: agent
+    attributes:
+      label: Agent
+      description: Name of the agent/CLI/app (e.g. Aider, Gemini CLI, Goose, Cline).
+      placeholder: Aider
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Homepage / install page
+      placeholder: https://...
+  - type: dropdown
+    id: type
+    attributes:
+      label: Kind
+      options:
+        - Terminal CLI (TUI)
+        - Terminal CLI (non-TUI)
+        - Desktop app
+        - IDE plugin / extension
+      description: How does the agent run? TUI CLIs need the terminal launch flow.
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        ## Configuration (how does the agent accept a custom API endpoint + key?)
+  - type: dropdown
+    id: config_mode
+    attributes:
+      label: Configuration surface
+      options:
+        - Global config file (JSON/TOML/YAML)
+        - Profile / separate config file
+        - Environment variables only
+        - Desktop app config (rewrite)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: config_details
+    attributes:
+      label: Config details
+      description: "File path(s) and/or env var names, example snippet (redact real keys). Which gateway API does it speak: OpenAI /responses, Anthropic /messages, or other?"
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: Platforms to support
+      multiple: true
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I plan to implement it — I read the "Adding a new connector" guide in CONTRIBUTING.md

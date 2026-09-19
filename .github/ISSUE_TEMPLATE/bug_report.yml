@@ -1,0 +1,61 @@
+name: Bug report
+description: Report a bug in ReQurv Launch
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before reporting, please check that you are on the latest release and that the bug is not already reported.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Linux
+        - Windows
+      description: Which OS are you running the app on?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Shown in the app title bar / About, or the tag of the release you installed (e.g. v0.1.2).
+      placeholder: v0.1.2
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Affected agent
+      options:
+        - OpenCode
+        - Codex
+        - Claude Code
+        - ChatGPT.app
+        - Other / not agent-specific
+      description: Which agent or feature is involved?
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead? Include error messages from the UI or the terminal.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / extra context
+      description: Relevant terminal output, config file state, etc. (redact your AI Hive API key before pasting)
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I ran the latest release (or built from main)
+          required: true
+        - label: I did not paste my AI Hive API key anywhere in this issue
+          required: true
