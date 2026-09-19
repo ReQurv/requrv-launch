@@ -8,14 +8,18 @@ const meta = computed(() => SERVICE_META[props.id])
 const installed = computed(() => status.value?.[props.id] ?? false)
 const canLaunch = computed(() => keySaved.value && !!selectedModel.value && installed.value)
 const needsSetup = computed(() => !keySaved.value || !selectedModel.value)
-const chatgptConfigured = computed(
+const restoreConfigured = computed(
   () => props.id === 'codex' && (status.value?.codex_app ?? false) && (status.value?.codex_app_configured ?? false)
+)
+const appLabel = computed(() => (props.id === 'claude_code' ? 'Claude' : 'ChatGPT'))
+const restoreBody = computed(() =>
+  'Vengono recuperati config.toml e auth.json pre-Hive e ChatGPT tornerà a usare l\'account OpenAI.'
 )
 const restoreModalOpen = ref(false)
 
 function confirmRestore() {
   restoreModalOpen.value = false
-  void hive.restoreChatgpt()
+  void hive.restoreApp(props.id)
 }
 
 const blockReason = computed<string | null>(() => {
@@ -87,8 +91,8 @@ const blockReason = computed<string | null>(() => {
       />
 
       <UButton
-        v-if="chatgptConfigured"
-        label="Ripristina ChatGPT"
+        v-if="restoreConfigured"
+        :label="`Ripristina ${appLabel}`"
         icon="i-lucide-rotate-ccw"
         variant="ghost"
         size="sm"
@@ -121,14 +125,14 @@ const blockReason = computed<string | null>(() => {
 
   <UModal
     :open="restoreModalOpen"
-    title="Ripristina ChatGPT"
-    description="Tornare alla configurazione originale di ChatGPT?"
+    :title="`Ripristina ${appLabel}`"
+    :description="`Tornare alla configurazione originale di ${appLabel}?`"
     :ui="{ content: 'max-w-md' }"
     @update:open="restoreModalOpen = $event"
   >
     <template #body>
       <p class="text-sm text-muted">
-        Vengono recuperati config.toml e auth.json pre-Hive e ChatGPT tornerà a usare l'account OpenAI.
+        {{ restoreBody }}
       </p>
     </template>
 

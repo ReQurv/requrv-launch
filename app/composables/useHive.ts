@@ -1,20 +1,22 @@
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
-export type ServiceId = 'opencode' | 'codex'
+export type ServiceId = 'opencode' | 'codex' | 'claude_code'
 export type LaunchMode = 'app' | 'terminal'
 
 export interface ServiceStatus {
   opencode: boolean
   codex: boolean
+  claude_code: boolean
   opencode_app: boolean
   opencode_cli: boolean
   codex_app: boolean
   codex_cli: boolean
   codex_app_configured: boolean
+  claude_code_cli: boolean
 }
 
-export interface ChatgptAppResult {
+export interface AppRestartResult {
   restart_required: boolean
 }
 
@@ -43,7 +45,18 @@ export const SERVICE_META: Record<
     description: 'CLI di coding di OpenAI. Usa un profilo dedicato puntato ad AI Hive.',
     icon: 'i-simple-icons-openai',
     downloadUrl: 'https://chatgpt.com/codex'
+  },
+  claude_code: {
+    title: 'Claude Code',
+    description: 'CLI di coding di Anthropic. Si avvia nel terminale puntato ad AI Hive (npm install -g @anthropic-ai/claude-code).',
+    icon: 'i-simple-icons-claudecode',
+    downloadUrl: 'https://claude.com/product/claude-code'
   }
+}
+
+// Desktop app label shown in toasts and restart dialogs.
+const APP_LABELS: Partial<Record<ServiceId, string>> = {
+  codex: 'ChatGPT'
 }
 
 const isTauri = computed(() => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window)
@@ -68,6 +81,7 @@ const keyModalOpen = ref(false)
 const launchTarget = ref<ServiceId | null>(null)
 const launchModalOpen = ref(false)
 const restartModalOpen = ref(false)
+const restartTarget = ref<ServiceId | null>(null)
 const restarting = ref(false)
 const restoring = ref(false)
 
@@ -165,7 +179,9 @@ export function useHive() {
   async function requestLaunch(service: ServiceId) {
     if (!key.value.trim() || !selectedModel.value || launching.value) return
     await refreshStatus()
-    const appAvailable = status.value?.[`${service}_app`] ?? false
+    // Claude Code is terminal-only: Claude Desktop cannot be pointed at AI
+    // Hive (cloud Code tab bound to the claude.ai account).
+    const appAvailable = service === 'claude_code' ? false : status.value?.[`${service}_app`] ?? false
     const terminalAvailable = status.value?.[`${service}_cli`] ?? false
     if (appAvailable && terminalAvailable) {
       launchTarget.value = service
@@ -184,7 +200,7 @@ export function useHive() {
       if (service === 'codex' && mode === 'app') {
         // Il flusso app configura ChatGPT su AI Hive e, se l'app è già aperta,
         // chiede di riavviarla perché il catalogo modelli si legge all'avvio.
-        const result = await invoke<ChatgptAppResult>('configure_chatgpt_app', {
+        const result = await invoke<AppRestartResult>('configure_chatgpt_app', {
           model: selectedModel.value,
           key: key.value.trim(),
           models: chatModels.value
@@ -194,6 +210,7 @@ export function useHive() {
           color: 'success'
         })
         if (result.restart_required) {
+          restartTarget.value = 'codex'
           restartModalOpen.value = true
         } else {
           await invoke('open_chatgpt_app')
@@ -224,18 +241,21 @@ export function useHive() {
     }
   }
 
-  async function confirmChatgptRestart() {
+  async function confirmRestart() {
+    const service = restartTarget.value
     restartModalOpen.value = false
+    if (!service || service !== 'codex') return
+    const label = APP_LABELS[service] ?? SERVICE_META[service].title
     restarting.value = true
     try {
       await invoke('restart_chatgpt_app')
       toast.add({
-        title: 'ChatGPT riavviato con AI Hive',
+        title: `${label} riavviato con AI Hive`,
         color: 'success'
       })
     } catch (error) {
       toast.add({
-        title: 'Riavvio di ChatGPT non riuscito',
+        title: `Riavvio di ${label} non riuscito`,
         description: String(error),
         color: 'error'
       })
@@ -245,31 +265,37 @@ export function useHive() {
     }
   }
 
-  function cancelChatgptRestart() {
+  function cancelRestart() {
+    const service = restartTarget.value
     restartModalOpen.value = false
+    if (!service) return
+    const label = APP_LABELS[service] ?? SERVICE_META[service].title
     toast.add({
-      title: 'ChatGPT si aggiornerà al prossimo avvio',
+      title: `${label} si aggiornerà al prossimo avvio`,
       color: 'info'
     })
   }
 
-  async function restoreChatgpt() {
+  async function restoreApp(service: ServiceId) {
+    if (service !== 'codex') return
     if (!isTauri.value || restoring.value) return
     restoring.value = true
+    const label = APP_LABELS[service] ?? SERVICE_META[service].title
     try {
-      const result = await invoke<ChatgptAppResult>('restore_chatgpt_app')
+      const result = await invoke<AppRestartResult>('restore_chatgpt_app')
       toast.add({
-        title: 'ChatGPT ripristinato',
+        title: `${label} ripristinato`,
         color: 'success'
       })
       if (result.restart_required) {
+        restartTarget.value = service
         restartModalOpen.value = true
       } else {
         await refreshStatus()
       }
     } catch (error) {
       toast.add({
-        title: 'Ripristino di ChatGPT non riuscito',
+        title: `Ripristino di ${label} non riuscito`,
         description: String(error),
         color: 'error'
       })
@@ -300,6 +326,7 @@ export function useHive() {
     launchTarget,
     launchModalOpen,
     restartModalOpen,
+    restartTarget,
     restarting,
     restoring,
     chatModels,
@@ -310,9 +337,9 @@ export function useHive() {
     clearKey,
     requestLaunch,
     launch,
-    confirmChatgptRestart,
-    cancelChatgptRestart,
-    restoreChatgpt,
+    confirmRestart,
+    cancelRestart,
+    restoreApp,
     openExternal
   }
 }

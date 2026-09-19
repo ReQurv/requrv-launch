@@ -8,6 +8,7 @@ Attualmente supporta:
 
 - [OpenCode](https://opencode.ai) — IDE di coding (su macOS è disponibile sia l'app desktop sia la CLI, altrove la CLI)
 - [Codex](https://chatgpt.com/codex) — CLI di coding di OpenAI (su macOS è disponibile anche l'app ChatGPT)
+- [Claude Code](https://claude.com/product/claude-code) — agente di coding di Anthropic (CLI)
 
 ## Funzionalità
 
@@ -18,7 +19,8 @@ Attualmente supporta:
   - **Scelta della destinazione**: se sia l'app desktop sia la CLI sono installate, un modale chiede all'utente di aprire l'app o il terminale; altrimenti l'avvio è diretto sulla destinazione disponibile
   - **OpenCode**: scrive il provider `requrv-hive` nel file di configurazione globale (`~/.config/opencode/opencode.jsonc` o `.json`), preservando le altre impostazioni e creando un backup
    - **Codex (terminale)**: crea un profilo dedicato (`~/.codex/hive.config.toml`) con `wire_api = "responses"` e avvia la CLI con `--profile hive` e la variabile `HIVE_API_KEY`
-   - **ChatGPT.app (app, solo macOS)**: punta `~/.codex/config.toml` ad AI Hive (`openai_base_url` + catalogo modelli `~/.codex/hive-models.json`) e salva la chiave in `~/.codex/auth.json` in modalità apikey; i file originali sono salvati in backup `.hive.bak` e recuperabili in un clic dal tasto "Ripristina ChatGPT". Il catalogo modelli viene letto all'avvio, quindi se l'app è già aperta viene chiesto il riavvio
+    - **ChatGPT.app (app, solo macOS)**: punta `~/.codex/config.toml` ad AI Hive tramite un provider dedicato `requrv-hive` (`base_url`, `wire_api = "responses"`, chiave inclusa; senza WebSocket, non supportato dal gateway) + catalogo modelli `~/.codex/hive-models.json`, e salva la chiave anche in `~/.codex/auth.json` in modalità apikey; i file originali sono salvati in backup `.hive.bak` e recuperabili in un clic dal tasto "Ripristina ChatGPT". Il catalogo modelli viene letto all'avvio, quindi se l'app è già aperta viene chiesto il riavvio
+   - **Claude Code (terminale)**: avvia la CLI puntata ad AI Hive solo con variabili d'ambiente (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`) senza modificare `~/.claude`; prima verifica che il gateway esponga l'endpoint `/messages` (Anthropic Messages API). (La Code tab di Claude Desktop non è supportata: nelle versioni consumer è legata all'account claude.ai e non può usare un gateway esterno)
 
 Su macOS gli agenti sono applicazioni TUI: l'avvio avviene aprendo uno script nel terminale di sistema, in modo da fornire un TTY reale.
 

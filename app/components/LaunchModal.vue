@@ -4,17 +4,19 @@ const { launchTarget, launchModalOpen } = hive
 
 const meta = computed(() => (launchTarget.value ? SERVICE_META[launchTarget.value] : null))
 
-const appDescription = computed(() =>
-  launchTarget.value === 'codex'
-    ? 'Configura ChatGPT.app su AI Hive e aprila. I modelli dell\'account ChatGPT non saranno disponibili finché non ripristini la configurazione.'
-    : 'Apri OpenCode.app con il provider ReQurv Hive configurato.'
-)
+const appDescription = computed(() => {
+  if (launchTarget.value === 'codex') {
+    return 'Configura ChatGPT.app su AI Hive e aprila. I modelli dell\'account ChatGPT non saranno disponibili finché non ripristini la configurazione.'
+  }
+  return 'Apri OpenCode.app con il provider ReQurv Hive configurato.'
+})
 
-const terminalDescription = computed(() =>
-  launchTarget.value === 'codex'
-    ? 'Avvia codex in un nuovo terminale con --profile hive.'
-    : 'Avvia la CLI opencode in un nuovo terminale, già puntata ad AI Hive.'
-)
+const terminalDescription = computed(() => {
+  if (launchTarget.value === 'codex') {
+    return 'Avvia codex in un nuovo terminale con --profile hive.'
+  }
+  return 'Avvia la CLI opencode in un nuovo terminale, già puntata ad AI Hive.'
+})
 
 async function choose(mode: LaunchMode) {
   const target = launchTarget.value

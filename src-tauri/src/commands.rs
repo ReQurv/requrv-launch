@@ -4,6 +4,9 @@ use std::process::{Command, Stdio};
 use tauri::Manager;
 
 pub const HIVE_OPENAI_BASE_URL: &str = "https://hive.requrv.ai/api/v1";
+// Claude Code speaks the Anthropic Messages API and appends /v1/messages to
+// ANTHROPIC_BASE_URL, so the base is the gateway without the trailing /v1.
+pub const HIVE_ANTHROPIC_BASE_URL: &str = "https://hive.requrv.ai/api";
 
 const KEY_FILE_NAME: &str = "hive.json";
 
@@ -104,15 +107,14 @@ pub async fn list_hive_models(key: String) -> Result<Vec<HiveModel>, String> {
   Ok(models)
 }
 
-// Error for a /responses probe status, if any. 4xx from the handler (422
+// Error for a gateway probe status, if any. 4xx from the handler (422
 // validation on the empty body, 401, 405, ...) prove the route exists, so
 // only 404 (route missing) and 5xx (gateway failure) are errors.
-fn probe_error(status: reqwest::StatusCode) -> Option<String> {
+fn probe_error(status: reqwest::StatusCode, agent: &str, endpoint: &str) -> Option<String> {
   if status == reqwest::StatusCode::NOT_FOUND {
-    Some(
-      "Codex richiede l'endpoint /responses, che AI Hive non espone (HTTP 404). Riprova più tardi."
-        .into(),
-    )
+    Some(format!(
+      "{agent} richiede l'endpoint {endpoint}, che AI Hive non espone (HTTP 404). Riprova più tardi."
+    ))
   } else if status.is_server_error() {
     Some(format!("AI Hive ha risposto con lo stato {status}"))
   } else {
@@ -120,14 +122,14 @@ fn probe_error(status: reqwest::StatusCode) -> Option<String> {
   }
 }
 
-// Codex (>= 0.136) accepts only `wire_api = "responses"`, so the gateway must
-// expose POST /responses. Probe it before opening the terminal to fail fast
-// with an actionable message instead of a broken TUI session. The gateway
-// routes only POST on that path (HEAD/GET never complete), so the probe POSTs
-// an empty body: it fails server-side validation without invoking a model.
-async fn assert_responses_available(key: &str) -> Result<(), String> {
+// POST an empty body to the gateway endpoint the agent needs. A 4xx from the
+// handler (e.g. 422 validation on the empty body) proves the route exists
+// without invoking a model; only 404 and 5xx are errors. Probing before
+// opening a session fails fast with an actionable message instead of a
+// broken TUI.
+async fn assert_endpoint_available(key: &str, endpoint: &str, agent: &str) -> Result<(), String> {
   let client = reqwest::Client::new();
-  let url = format!("{HIVE_OPENAI_BASE_URL}/responses");
+  let url = format!("{HIVE_OPENAI_BASE_URL}{endpoint}");
   let response = client
     .post(&url)
     .bearer_auth(key.trim())
@@ -136,21 +138,37 @@ async fn assert_responses_available(key: &str) -> Result<(), String> {
     .send()
     .await
     .map_err(|e| format!("Impossibile raggiungere AI Hive: {e}"))?;
-  if let Some(err) = probe_error(response.status()) {
+  if let Some(err) = probe_error(response.status(), agent, endpoint) {
     return Err(err);
   }
   Ok(())
+}
+
+// Codex (>= 0.136) accepts only `wire_api = "responses"`, so the gateway must
+// expose POST /responses. The gateway routes only POST on that path (HEAD/GET
+// never complete), so the probe POSTs an empty body.
+async fn assert_responses_available(key: &str) -> Result<(), String> {
+  assert_endpoint_available(key, "/responses", "Codex").await
+}
+
+// Claude Code speaks the Anthropic Messages API, so the gateway must expose
+// POST /messages (it must also accept `role: "system"` entries in messages[],
+// which Claude Code v2.x sends).
+async fn assert_messages_available(key: &str) -> Result<(), String> {
+  assert_endpoint_available(key, "/messages", "Claude Code").await
 }
 
 #[derive(Serialize)]
 pub struct ServiceStatus {
   pub opencode: bool,
   pub codex: bool,
+  pub claude_code: bool,
   pub opencode_app: bool,
   pub opencode_cli: bool,
   pub codex_app: bool,
   pub codex_cli: bool,
   pub codex_app_configured: bool,
+  pub claude_code_cli: bool,
 }
 
 // Reports every launch target separately so the UI can offer the app/terminal
@@ -162,14 +180,19 @@ pub fn check_services() -> ServiceStatus {
   let codex_app = chatgpt_app_bundle().is_some();
   let codex_cli = find_service_binary("codex").is_some() || codex_app_binary().is_some();
   let codex_app_configured = home_dir().is_some_and(|home| chatgpt_app_configured_in(&home));
+  // Claude Code is terminal-only: Claude Desktop cannot be pointed at AI Hive
+  // (cloud Code tab bound to the claude.ai account), so only the CLI counts.
+  let claude_code_cli = find_service_binary("claude").is_some();
   ServiceStatus {
     opencode: opencode_app || opencode_cli,
     codex: codex_app || codex_cli,
+    claude_code: claude_code_cli,
     opencode_app,
     opencode_cli,
     codex_app,
     codex_cli,
     codex_app_configured,
+    claude_code_cli,
   }
 }
 
@@ -423,6 +446,19 @@ fn find_service_binary(service: &str) -> Option<PathBuf> {
         vec![home.join(".local").join("bin").join("codex")]
       }
     }
+    "claude" => {
+      if let Ok(appdata) = std::env::var("APPDATA") {
+        let appdata = PathBuf::from(appdata);
+        vec![
+          appdata.join("npm").join("claude.cmd"),
+          appdata.join("npm").join("claude.exe"),
+        ]
+      } else {
+        // npm global installs fall through to the nvm/npm-prefix fallbacks
+        // below; the native installer puts the binary in ~/.local/bin.
+        vec![home.join(".local").join("bin").join("claude")]
+      }
+    }
     _ => return None,
   };
   if let Some(found) = candidates.into_iter().find(|c| c.is_file()) {
@@ -474,6 +510,11 @@ fn find_service_binary(service: &str) -> Option<PathBuf> {
       npm_dir.join("bin").join("codex"),
       npm_dir.join("codex.cmd"),
       npm_dir.join("codex.exe"),
+    ],
+    "claude" => vec![
+      npm_dir.join("bin").join("claude"),
+      npm_dir.join("claude.cmd"),
+      npm_dir.join("claude.exe"),
     ],
     _ => return None,
   };
@@ -541,11 +582,14 @@ pub async fn launch_service(app: tauri::AppHandle, service: String, model: Strin
   }
   // ("codex", "app") is not handled here: the ChatGPT app flow needs a
   // restart confirmation, so the frontend drives it via configure_chatgpt_app,
-  // open_chatgpt_app and restart_chatgpt_app.
+  // open_chatgpt_app and restart_chatgpt_app. ("claude_code", "app") does not
+  // exist: Claude Desktop cannot be pointed at AI Hive (see the note in the
+  // Claude Desktop section).
   match (service.as_str(), mode.as_str()) {
     ("opencode", "app") => launch_opencode_app(model, key),
     ("opencode", "terminal") => launch_opencode_cli(&app, model, key),
     ("codex", "terminal") => launch_codex_cli(&app, model, key).await,
+    ("claude_code", "terminal") => launch_claude_cli(&app, model, key).await,
     _ => Err(format!("Avvio non valido: {service} in modalità {mode}")),
   }
 }
@@ -745,14 +789,19 @@ pub fn open_chatgpt_app() -> Result<(), String> {
 // ---------------------------------------------------------------------------
 // ChatGPT.app (Codex desktop) su AI Hive
 // ---------------------------------------------------------------------------
-// The ChatGPT desktop app reads the same ~/.codex files as the CLI: pointing
-// the root openai_base_url at AI Hive, attaching a generated model catalog and
-// putting the Hive key in auth.json (apikey mode) makes the app use Hive
-// models. The original config.toml/auth.json are backed up (.hive.bak) so the
-// previous setup can be restored.
+// The ChatGPT desktop app reads the same ~/.codex files as the CLI. Since the
+// 26.x builds the Responses transport defaults to WebSocket (wss://<host>/api/v1/responses),
+// which the Hive gateway does not implement, the app must use a custom
+// provider with supports_websockets = false (built-in providers cannot be
+// overridden). The provider carries the Hive key via experimental_bearer_token
+// because custom providers ignore auth.json; auth.json (apikey mode) is still
+// written so the app keeps a coherent auth state. A generated model catalog
+// feeds the app picker. The original config.toml/auth.json are backed up
+// (.hive.bak) so the previous setup can be restored.
 const HIVE_CATALOG_FILE: &str = "hive-models.json";
 const HIVE_CONFIG_BACKUP: &str = "config.toml.hive.bak";
 const HIVE_AUTH_BACKUP: &str = "auth.json.hive.bak";
+const HIVE_PROVIDER_ID: &str = "requrv-hive";
 
 fn codex_dir_in(home: &Path) -> PathBuf {
   home.join(".codex")
@@ -839,6 +888,23 @@ fn build_hive_catalog(models: &[HiveModel]) -> serde_json::Value {
   serde_json::json!({ "models": entries })
 }
 
+// The Hive provider table when present in a parsed config.
+fn hive_provider_table(table: &toml::Table) -> Option<&toml::Table> {
+  table
+    .get("model_providers")
+    .and_then(|v| v.as_table())
+    .and_then(|providers| providers.get(HIVE_PROVIDER_ID))
+    .and_then(|v| v.as_table())
+}
+
+// True when the provider (or its legacy root openai_base_url) points at AI Hive.
+fn hive_config_ours(table: &toml::Table) -> bool {
+  table.get("openai_base_url").and_then(|v| v.as_str()) == Some(HIVE_OPENAI_BASE_URL)
+    || hive_provider_table(table)
+      .and_then(|p| p.get("base_url").and_then(|v| v.as_str()))
+      == Some(HIVE_OPENAI_BASE_URL)
+}
+
 // True when the codex config is pointed at AI Hive by this launcher.
 fn chatgpt_app_configured_in(home: &Path) -> bool {
   let Ok(raw) = std::fs::read_to_string(codex_config_path_in(home)) else {
@@ -847,7 +913,7 @@ fn chatgpt_app_configured_in(home: &Path) -> bool {
   let Ok(table) = raw.parse::<toml::Table>() else {
     return false;
   };
-  table.get("openai_base_url").and_then(|v| v.as_str()) == Some(HIVE_OPENAI_BASE_URL)
+  hive_config_ours(&table)
     && table
       .get("model_catalog_json")
       .and_then(|v| v.as_str())
@@ -882,8 +948,24 @@ fn configure_chatgpt_app_in(home: &Path, model: &str, models: &[HiveModel], key:
     toml::Table::new()
   };
   table.insert("model".into(), toml::Value::String(model.to_string()));
-  table.insert("openai_base_url".into(), toml::Value::String(HIVE_OPENAI_BASE_URL.into()));
+  table.insert("model_provider".into(), toml::Value::String(HIVE_PROVIDER_ID.into()));
   table.insert("model_catalog_json".into(), toml::Value::String(catalog_path.to_string_lossy().into_owned()));
+  // Legacy layouts pointed the root openai_base_url at Hive; the provider
+  // table supersedes it, so drop it when reconfiguring.
+  table.remove("openai_base_url");
+  let mut provider = toml::Table::new();
+  provider.insert("name".into(), toml::Value::String("ReQurv AI Hive".into()));
+  provider.insert("base_url".into(), toml::Value::String(HIVE_OPENAI_BASE_URL.into()));
+  provider.insert("wire_api".into(), toml::Value::String("responses".into()));
+  provider.insert("supports_websockets".into(), toml::Value::Boolean(false));
+  provider.insert("experimental_bearer_token".into(), toml::Value::String(key.to_string()));
+  let providers = table
+    .entry("model_providers")
+    .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+  let providers = providers
+    .as_table_mut()
+    .ok_or_else(|| "model_providers non modificabile in config.toml".to_string())?;
+  providers.insert(HIVE_PROVIDER_ID.into(), toml::Value::Table(provider));
   let rendered = toml::to_string(&table).map_err(|e| e.to_string())?;
   std::fs::write(&config_path, rendered)
     .map_err(|e| format!("Impossibile scrivere {}: {e}", config_path.display()))?;
@@ -935,11 +1017,27 @@ fn restore_chatgpt_app_in(home: &Path, key: &str) -> Result<(), String> {
       let mut table: toml::Table = raw.parse().map_err(|e| {
         format!("{} non è un TOML valido: {e}. Correggi il file e riprova.", config_path.display())
       })?;
-      let is_hive = table.get("openai_base_url").and_then(|v| v.as_str()) == Some(HIVE_OPENAI_BASE_URL);
+      let is_hive = hive_config_ours(&table);
       if is_hive {
         table.remove("model");
         table.remove("openai_base_url");
         table.remove("model_catalog_json");
+        if table.get("model_provider").and_then(|v| v.as_str()) == Some(HIVE_PROVIDER_ID) {
+          table.remove("model_provider");
+        }
+        if let Some(providers) = table.get_mut("model_providers").and_then(|v| v.as_table_mut()) {
+          let ours = providers
+            .get(HIVE_PROVIDER_ID)
+            .and_then(|p| p.as_table())
+            .and_then(|p| p.get("base_url").and_then(|v| v.as_str()))
+            == Some(HIVE_OPENAI_BASE_URL);
+          if ours {
+            providers.remove(HIVE_PROVIDER_ID);
+          }
+          if providers.is_empty() {
+            table.remove("model_providers");
+          }
+        }
         if table.is_empty() {
           std::fs::remove_file(&config_path).map_err(|e| e.to_string())?;
         } else {
@@ -1049,14 +1147,14 @@ fn quit_and_reopen_chatgpt() -> Result<(), String> {
 }
 
 #[derive(Serialize)]
-pub struct ChatgptAppResult {
+pub struct AppRestartResult {
   pub restart_required: bool,
 }
 
 // Point ChatGPT.app at AI Hive (config, catalog, auth) and report whether a
 // running instance needs a restart to load the new catalog.
 #[tauri::command]
-pub async fn configure_chatgpt_app(model: String, key: String, models: Vec<HiveModel>) -> Result<ChatgptAppResult, String> {
+pub async fn configure_chatgpt_app(model: String, key: String, models: Vec<HiveModel>) -> Result<AppRestartResult, String> {
   let model = model.trim();
   let key = key.trim();
   if model.is_empty() {
@@ -1071,7 +1169,7 @@ pub async fn configure_chatgpt_app(model: String, key: String, models: Vec<HiveM
   assert_responses_available(key).await?;
   let home = home_dir().ok_or_else(|| "Home directory non trovata".to_string())?;
   configure_chatgpt_app_in(&home, model, &models, key)?;
-  Ok(ChatgptAppResult {
+  Ok(AppRestartResult {
     restart_required: chatgpt_app_running(),
   })
 }
@@ -1084,14 +1182,21 @@ pub fn restart_chatgpt_app() -> Result<(), String> {
 // Restore the original ChatGPT setup (config.toml, auth.json, catalog) and
 // report whether a running instance needs a restart to pick it up.
 #[tauri::command]
-pub fn restore_chatgpt_app(app: tauri::AppHandle) -> Result<ChatgptAppResult, String> {
+pub fn restore_chatgpt_app(app: tauri::AppHandle) -> Result<AppRestartResult, String> {
   let home = home_dir().ok_or_else(|| "Home directory non trovata".to_string())?;
   let key = get_hive_key(app).ok().flatten().unwrap_or_default();
   restore_chatgpt_app_in(&home, &key)?;
-  Ok(ChatgptAppResult {
+  Ok(AppRestartResult {
     restart_required: chatgpt_app_running(),
   })
 }
+
+// Note on Claude Desktop: unlike ChatGPT.app, the Claude desktop app cannot be
+// pointed at AI Hive. Its Code tab runs cloud sessions authenticated with the
+// claude.ai account (CLAUDE_CODE_OAUTH_TOKEN, subscription-scoped model
+// catalog) and ignores ~/.claude/settings.json (the SDK is launched with empty
+// setting sources); custom gateways are an enterprise-only ("3p") feature that
+// is disabled in consumer builds. So Claude Code is terminal-only here.
 
 async fn launch_codex_cli(app: &tauri::AppHandle, model: &str, key: &str) -> Result<(), String> {
   let bin = find_service_binary("codex")
@@ -1119,6 +1224,28 @@ async fn launch_codex_cli(app: &tauri::AppHandle, model: &str, key: &str) -> Res
   let args = vec!["--profile".to_string(), "hive".to_string()];
   let env: Vec<(&str, &str)> = vec![("HIVE_API_KEY", key)];
   launch_cli(app, "codex", &bin, &args, &env)
+}
+
+// Claude Code speaks the Anthropic Messages API, so the launcher only sets
+// env vars and never writes to ~/.claude: ANTHROPIC_BASE_URL routes the client
+// through the gateway (it appends /v1/messages), ANTHROPIC_API_KEY is sent as
+// the x-api-key header in place of a Claude subscription, and ANTHROPIC_MODEL
+// pins the selected Hive model. No file is persisted, so nothing to restore.
+async fn launch_claude_cli(app: &tauri::AppHandle, model: &str, key: &str) -> Result<(), String> {
+  let bin = find_service_binary("claude")
+    .ok_or_else(|| String::from("Claude Code non è installato. Installalo con npm install -g @anthropic-ai/claude-code."))?;
+
+  assert_messages_available(key).await?;
+
+  let env: Vec<(&str, &str)> = vec![
+    ("ANTHROPIC_BASE_URL", HIVE_ANTHROPIC_BASE_URL),
+    ("ANTHROPIC_API_KEY", key),
+    ("ANTHROPIC_MODEL", model),
+    // The model is not in the client's catalog: pin a sane context window
+    // instead of letting auto-compact assume 200k.
+    ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "128000"),
+  ];
+  launch_cli(app, "claude", &bin, &[], &env)
 }
 
 // Quote a value for safe inclusion in a single-quoted shell word.
@@ -1317,9 +1444,31 @@ mod tests {
     assert!(script.contains("'/Users/x/.nvm/versions/node/v24/bin/codex' '--profile' 'hive'"));
   }
 
+  // Claude Code non prende argomenti: il terminale lo punta ad AI Hive solo
+  // con le variabili d'ambiente, senza toccare ~/.claude.
+  #[test]
+  fn builds_claude_terminal_script() {
+    let script = build_terminal_script(
+      Path::new("/Users/x/.local/bin/claude"),
+      &[],
+      &[
+        ("ANTHROPIC_BASE_URL", HIVE_ANTHROPIC_BASE_URL),
+        ("ANTHROPIC_API_KEY", "sk-test"),
+        ("ANTHROPIC_MODEL", "model-a"),
+        ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "128000"),
+      ],
+    );
+    assert!(script.contains("export ANTHROPIC_BASE_URL='https://hive.requrv.ai/api'"));
+    assert!(script.contains("export ANTHROPIC_API_KEY='sk-test'"));
+    assert!(script.contains("export ANTHROPIC_MODEL='model-a'"));
+    assert!(script.contains("export CLAUDE_CODE_MAX_CONTEXT_TOKENS='128000'"));
+    assert!(script.contains("'/Users/x/.local/bin/claude'"));
+    assert!(!script.contains("--"));
+  }
+
   // Il gateway risponde 422 al POST di prova con corpo vuoto (validazione del
   // body prima dell'invocazione del modello): qualsiasi 4xx dal handler prova
-  // che il percorso /responses esiste. Solo 404 e 5xx bloccano l'avvio.
+  // che il percorso esiste. Solo 404 e 5xx bloccano l'avvio.
   #[test]
   fn probe_treats_handler_rejections_as_available() {
     for status in [
@@ -1330,11 +1479,13 @@ mod tests {
       reqwest::StatusCode::UNPROCESSABLE_ENTITY,
       reqwest::StatusCode::TOO_MANY_REQUESTS,
     ] {
-      assert_eq!(probe_error(status), None, "status {status}");
+      assert_eq!(probe_error(status, "Codex", "/responses"), None, "status {status}");
     }
-    assert!(probe_error(reqwest::StatusCode::NOT_FOUND).is_some());
-    assert!(probe_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR).is_some());
-    assert!(probe_error(reqwest::StatusCode::BAD_GATEWAY).is_some());
+    let missing = probe_error(reqwest::StatusCode::NOT_FOUND, "Claude Code", "/messages").expect("404");
+    assert!(missing.contains("Claude Code"));
+    assert!(missing.contains("/messages"));
+    assert!(probe_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "Codex", "/responses").is_some());
+    assert!(probe_error(reqwest::StatusCode::BAD_GATEWAY, "Codex", "/responses").is_some());
   }
 
   // Simula un processo con PATH vecchio/stripped (es. app lanciata da un
@@ -1555,9 +1706,11 @@ mod tests {
     let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-cfg-{}", std::process::id()));
     let dir = tmp.join(".codex");
     std::fs::create_dir_all(&dir).expect("create temp dir");
-    let original_config = "model = \"gpt-5-codex\"\nnotify = [\"bar\"]\n[desktop]\ntheme = \"dark\"\n";
+    let original_config = format!(
+      "model = \"gpt-5-codex\"\nnotify = [\"bar\"]\nopenai_base_url = \"{HIVE_OPENAI_BASE_URL}\"\n[desktop]\ntheme = \"dark\"\n"
+    );
     let original_auth = r#"{"auth_mode": "chatgpt"}"#;
-    std::fs::write(dir.join("config.toml"), original_config).expect("write config");
+    std::fs::write(dir.join("config.toml"), original_config.as_str()).expect("write config");
     std::fs::write(dir.join("auth.json"), original_auth).expect("write auth");
 
     let models = vec![HiveModel { id: "model-a".into(), model_type: "TEXT_GENERATION".into() }];
@@ -1566,12 +1719,27 @@ mod tests {
     let rendered = std::fs::read_to_string(dir.join("config.toml")).expect("read config back");
     let value: toml::Table = rendered.parse().expect("valid toml");
     assert_eq!(value.get("model").and_then(|v| v.as_str()), Some("model-a"));
-    assert_eq!(value.get("openai_base_url").and_then(|v| v.as_str()), Some(HIVE_OPENAI_BASE_URL));
+    assert_eq!(value.get("model_provider").and_then(|v| v.as_str()), Some(HIVE_PROVIDER_ID));
+    // The legacy root key is superseded by the provider table.
+    assert!(value.get("openai_base_url").is_none());
     assert!(value
       .get("model_catalog_json")
       .and_then(|v| v.as_str())
       .unwrap()
       .ends_with("hive-models.json"));
+    let provider = value
+      .get("model_providers")
+      .and_then(|v| v.as_table())
+      .and_then(|p| p.get(HIVE_PROVIDER_ID))
+      .and_then(|v| v.as_table())
+      .expect("hive provider table");
+    assert_eq!(provider.get("base_url").and_then(|v| v.as_str()), Some(HIVE_OPENAI_BASE_URL));
+    assert_eq!(provider.get("wire_api").and_then(|v| v.as_str()), Some("responses"));
+    assert_eq!(provider.get("supports_websockets").and_then(|v| v.as_bool()), Some(false));
+    assert_eq!(
+      provider.get("experimental_bearer_token").and_then(|v| v.as_str()),
+      Some("requrv_sk_test")
+    );
     assert_eq!(value.get("notify").and_then(|v| v.as_array()).unwrap()[0].as_str(), Some("bar"));
     assert_eq!(
       value.get("desktop").and_then(|v| v.as_table()).and_then(|t| t.get("theme")).and_then(|v| v.as_str()),
@@ -1645,7 +1813,7 @@ mod tests {
   }
 
   #[test]
-  fn restore_without_backup_strips_hive_keys_and_own_auth() {
+  fn restore_without_backup_strips_legacy_hive_keys_and_own_auth() {
     let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-strip-{}", std::process::id()));
     let dir = tmp.join(".codex");
     std::fs::create_dir_all(&dir).expect("create temp dir");
@@ -1661,10 +1829,38 @@ mod tests {
 
     let value: toml::Table = std::fs::read_to_string(dir.join("config.toml")).expect("config kept").parse().expect("valid toml");
     assert!(value.get("model").is_none());
+    assert!(value.get("model_provider").is_none());
     assert!(value.get("openai_base_url").is_none());
     assert!(value.get("model_catalog_json").is_none());
     assert_eq!(value.get("notify").and_then(|v| v.as_array()).unwrap()[0].as_str(), Some("bar"));
     assert!(!dir.join("auth.json").exists());
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn restore_without_backup_strips_hive_provider_and_keeps_foreign_ones() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-chatgpt-provider-{}", std::process::id()));
+    let dir = tmp.join(".codex");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let configured = format!(
+      "model = \"model-a\"\nnotify = [\"bar\"]\nmodel_provider = \"{HIVE_PROVIDER_ID}\"\nmodel_catalog_json = \"{}\"\n\n[model_providers.{HIVE_PROVIDER_ID}]\nbase_url = \"{HIVE_OPENAI_BASE_URL}\"\nwire_api = \"responses\"\nsupports_websockets = false\n\n[model_providers.other]\nbase_url = \"https://example.com/v1\"\n",
+      dir.join("hive-models.json").display()
+    );
+    std::fs::write(dir.join("config.toml"), configured).expect("write config");
+
+    restore_chatgpt_app_in(&tmp, "requrv_sk_test").expect("restore");
+
+    let value: toml::Table = std::fs::read_to_string(dir.join("config.toml")).expect("config kept").parse().expect("valid toml");
+    assert!(value.get("model").is_none());
+    assert!(value.get("model_provider").is_none());
+    assert!(value.get("model_catalog_json").is_none());
+    let providers = value.get("model_providers").and_then(|v| v.as_table()).expect("providers kept");
+    assert!(providers.get(HIVE_PROVIDER_ID).is_none());
+    assert_eq!(
+      providers.get("other").and_then(|p| p.as_table()).and_then(|p| p.get("base_url")).and_then(|v| v.as_str()),
+      Some("https://example.com/v1")
+    );
+    assert_eq!(value.get("notify").and_then(|v| v.as_array()).unwrap()[0].as_str(), Some("bar"));
     let _ = std::fs::remove_dir_all(&tmp);
   }
 

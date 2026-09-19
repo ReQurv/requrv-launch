@@ -7,7 +7,7 @@ const { restartModalOpen, restarting } = hive
   <UModal
     :open="restartModalOpen"
     title="ChatGPT è in esecuzione"
-    description="Il catalogo modelli viene letto all'avvio dell'app."
+    description="Le impostazioni vengono lette all'avvio dell'app."
     :ui="{ content: 'max-w-md' }"
     @update:open="restartModalOpen = $event"
   >
@@ -23,13 +23,13 @@ const { restartModalOpen, restarting } = hive
           label="Più tardi"
           color="neutral"
           variant="ghost"
-          @click="hive.cancelChatgptRestart()"
+          @click="hive.cancelRestart()"
         />
         <UButton
           icon="i-lucide-rotate-cw"
           label="Riavvia e apri"
           :loading="restarting"
-          @click="hive.confirmChatgptRestart()"
+          @click="hive.confirmRestart()"
         />
       </div>
     </template>
