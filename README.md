@@ -43,13 +43,11 @@ Download the latest build for your platform from the [Releases page](https://git
 
 You need an AI Hive API key, which you paste into the app once (it is validated against the gateway and stored locally).
 
-### Unsigned builds
+### Code signing
 
-The release builds are not code-signed (and not notarized on macOS), so your OS will warn you on first launch. To proceed anyway:
-
-- **macOS**: right-click (Control-click) the app and choose **Open**, then confirm in the dialog — or run `xattr -d com.apple.quarantine /Applications/ReQurv\ Launch.app`
-- **Windows**: when SmartScreen shows "Windows protected your PC", click **More info** → **Run anyway**
-- **Linux**: if the AppImage won't start, grant it execute permission with `chmod +x ReQurv-Launch_*.AppImage`
+- **macOS**: release builds are code-signed (Developer ID) and notarized, so the app opens without any Gatekeeper warning
+- **Windows**: the build is not code-signed. When SmartScreen shows "Windows protected your PC", click **More info** → **Run anyway**
+- **Linux**: unsigned packages. If the AppImage won't start, grant it execute permission with `chmod +x ReQurv-Launch_*.AppImage`
 
 ## Development
 
@@ -85,6 +83,7 @@ bun run dev
 | `bun run build`     | Production frontend build (SSG)                   |
 | `bun run preview`   | Local preview of the production build             |
 | `bun run tauri`     | Tauri CLI (`dev`, `build`, etc.)                  |
+| `bun run build:mac` | Signed + notarized macOS release build (reads Apple credentials from the gitignored `.env`) |
 | `bun run lint`      | ESLint                                            |
 | `bun run typecheck` | Typecheck with `nuxt typecheck` / `vue-tsc`       |
 
@@ -120,7 +119,7 @@ Local build of the binaries and bundles:
 bun run tauri build
 ```
 
-Releases are automated: CI (`.github/workflows/build.yml`) builds for macOS, Linux and Windows and publishes a GitHub Release whenever a `v*` tag is pushed.
+Releases are automated: CI (`.github/workflows/build.yml`) builds for macOS, Linux and Windows and publishes a GitHub Release whenever a `v*` tag is pushed. The macOS bundle is code-signed (Developer ID) and notarized using repository secrets.
 
 ## CI
 
