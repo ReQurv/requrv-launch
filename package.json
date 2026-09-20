@@ -10,7 +10,8 @@
     "postinstall": "nuxt prepare",
     "lint": "eslint .",
     "typecheck": "nuxt typecheck",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:mac": "set -a && . ./.env && set +a && tauri build"
   },
   "dependencies": {
     "@iconify-json/lucide": "^1.2.129",

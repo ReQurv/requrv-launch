@@ -33,6 +33,33 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Export Apple signing env vars
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Export only the vars that are actually set, so the Tauri CLI
+          # degrades to an unsigned build when no Apple secrets exist yet.
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE=${APPLE_CERTIFICATE}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$APPLE_CERTIFICATE_PASSWORD" ]; then
+            echo "APPLE_CERTIFICATE_PASSWORD=${APPLE_CERTIFICATE_PASSWORD}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$APPLE_ID" ]; then
+            echo "APPLE_ID=${APPLE_ID}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$APPLE_PASSWORD" ]; then
+            echo "APPLE_PASSWORD=${APPLE_PASSWORD}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$APPLE_TEAM_ID" ]; then
+            echo "APPLE_TEAM_ID=${APPLE_TEAM_ID}" >> "$GITHUB_ENV"
+          fi
+
       - name: Build
         uses: tauri-apps/tauri-action@v0
         env:

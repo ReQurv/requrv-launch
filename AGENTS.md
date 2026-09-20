@@ -9,6 +9,7 @@ Open source (GPL-3.0-or-later). To add a new agent connector, follow the step-by
 - Use **Bun** exclusively (`packageManager` is bun; CI runs `bun install --frozen-lockfile`).
 - `bun install` first — `postinstall` runs `nuxt prepare`, which generates `.nuxt/`; `lint` and `typecheck` fail without it (ESLint imports its base config from `.nuxt/eslint.config.mjs`).
 - `bun run tauri dev` — full app (Nuxt on :3001 + Tauri window).
+- `bun run build:mac` — signed + notarized macOS release build. Sources the gitignored `.env` (`APPLE_ID`, `APPLE_PASSWORD` app-specific, `APPLE_TEAM_ID`) into the real process env — required because Bun's automatic `.env` loading is invisible to the N-API Rust CLI (`getenv`). The signing identity is pinned in `src-tauri/tauri.conf.json` (`bundle.macOS.signingIdentity`); keep it in sync with the Developer ID certificate.
 - `bun run dev` — web-only dev; Tauri features auto-degrade.
 - `bun run lint`, `bun run typecheck` — what CI runs for the frontend (`.github/workflows/ci.yml`). There is no JS test suite.
 - Rust tests: `cargo test` from `src-tauri/` (unit tests live in `src-tauri/src/commands.rs`). CI also runs `cargo clippy -- -D warnings`.
