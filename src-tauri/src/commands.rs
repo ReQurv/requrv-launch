@@ -522,6 +522,7 @@ fn find_service_binary(service: &str) -> Option<PathBuf> {
 }
 
 // Location of a desktop .app bundle among the given candidates.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn app_bundle_path_in(candidates: &[PathBuf]) -> Option<PathBuf> {
   candidates.iter().find(|path| path.is_dir()).cloned()
 }
@@ -1249,12 +1250,14 @@ async fn launch_claude_cli(app: &tauri::AppHandle, model: &str, key: &str) -> Re
 }
 
 // Quote a value for safe inclusion in a single-quoted shell word.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn shell_quote(value: &str) -> String {
   format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 // Build a bash script that sets the Hive env vars and runs the CLI so the
 // terminal window stays attached to the process (TUI apps need a real TTY).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn build_terminal_script(bin: &Path, args: &[String], env: &[(&str, &str)]) -> String {
   let mut out = String::from("#!/bin/bash\ncd \"$HOME\"\n");
   for (name, value) in env {
@@ -1289,7 +1292,7 @@ fn launch_cli(
   }
   #[cfg(not(target_os = "macos"))]
   {
-    let _ = app;
+    let _ = (app, service);
     spawn_cli(bin, args, env)
   }
 }
