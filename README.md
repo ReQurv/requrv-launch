@@ -9,6 +9,10 @@
 
 ReQurv Launch is a desktop application that launches your AI coding agents pre-configured for [AI Hive](https://hive.requrv.ai), the ReQurv AI gateway.
 
+[![Download for macOS (Apple Silicon)](https://img.shields.io/badge/Download%20for%20macOS%20(Apple%20Silicon)-dmg-00DC82?logo=apple&logoColor=white)](https://github.com/ReQurv/requrv-launch/releases/latest/download/ReQurv.Launch_aarch64.dmg)
+[![Download for Windows](https://img.shields.io/badge/Download%20for%20Windows-msi%20%C2%B7%20exe-00DC82?logo=windows&logoColor=white)](https://github.com/ReQurv/requrv-launch/releases/latest/download/ReQurv.Launch_x64-setup.exe)
+[![Download for Linux](https://img.shields.io/badge/Download%20for%20Linux-AppImage%20%C2%B7%20deb%20%C2%B7%20rpm-00DC82?logo=linux&logoColor=white)](https://github.com/ReQurv/requrv-launch/releases/latest/download/ReQurv.Launch_amd64.AppImage)
+
 ![Screenshot](docs/screenshot.png)
 
 ## Supported agents
