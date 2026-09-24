@@ -616,7 +616,10 @@ const KNOWN_HIVE_MODEL_CONTEXT: u32 = 200_000;
 const KNOWN_HIVE_MODEL_OUTPUT: u32 = 32_000;
 const KNOWN_HIVE_MODEL_INPUTS: [&str; 3] = ["text", "image", "video"];
 const KNOWN_HIVE_MODEL_OUTPUTS: [&str; 1] = ["text"];
-const KNOWN_HIVE_MODEL_REASONING_LEVELS: [&str; 3] = ["xhigh", "medium", "low"];
+// Modalities the codex model catalog can express: `input_modalities` only
+// accepts text/image/audio, so video is dropped for the ChatGPT app.
+const KNOWN_HIVE_MODEL_CATALOG_INPUTS: [&str; 2] = ["text", "image"];
+const KNOWN_HIVE_MODEL_REASONING_LEVELS: [&str; 3] = ["low", "medium", "xhigh"];
 const KNOWN_HIVE_MODEL_DEFAULT_REASONING: &str = "xhigh";
 const KNOWN_HIVE_MODEL_REASONING_EFFORT: &str = "medium";
 const DEFAULT_HIVE_CONTEXT: u32 = 128_000;
@@ -924,14 +927,36 @@ fn codex_catalog_path_in(home: &Path) -> PathBuf {
   codex_dir_in(home).join(HIVE_CATALOG_FILE)
 }
 
+// The catalog schema takes each reasoning level as a `ReasoningEffortPreset`
+// object; the descriptions mirror the texts ChatGPT.app ships for its own
+// models.
+fn reasoning_preset(level: &str) -> serde_json::Value {
+  let description = match level {
+    "low" => "Fast responses with lighter reasoning",
+    "medium" => "Balances speed and reasoning depth for everyday tasks",
+    "high" => "Greater reasoning depth for complex problems",
+    "xhigh" => "Extra high reasoning depth for complex problems",
+    "max" => "Maximum reasoning depth for the hardest problems",
+    _ => "Maximum reasoning with automatic task delegation",
+  };
+  serde_json::json!({ "effort": level, "description": description })
+}
+
 // Catalog entry for the app model picker. The Codex desktop engine's schema
 // is strict, so mirror the full field set ollama ships to ChatGPT (models
 // without thinking metadata get null/empty reasoning fields).
 fn hive_catalog_entry(model: &str, priority: i64) -> serde_json::Value {
   let known = model == KNOWN_HIVE_MODEL;
   let context = hive_model_context(model);
-  let inputs: &[&str] = if known { &KNOWN_HIVE_MODEL_INPUTS } else { &DEFAULT_HIVE_INPUTS };
-  let levels: &[&str] = if known { &KNOWN_HIVE_MODEL_REASONING_LEVELS } else { &[] };
+  let inputs: &[&str] = if known { &KNOWN_HIVE_MODEL_CATALOG_INPUTS } else { &DEFAULT_HIVE_INPUTS };
+  let levels: Vec<serde_json::Value> = if known {
+    KNOWN_HIVE_MODEL_REASONING_LEVELS
+      .iter()
+      .map(|level| reasoning_preset(level))
+      .collect()
+  } else {
+    Vec::new()
+  };
   serde_json::json!({
     "slug": model,
     "display_name": model,
@@ -1847,8 +1872,11 @@ fn is_newer_version(latest: &str, current: &str) -> bool {
 pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
   let current_version = app.package_info().version.to_string();
   let client = reqwest::Client::new();
+  // GitHub risponde 403 alle richieste senza User-Agent: senza questa
+  // intestazione la verifica fallisce sempre e il banner non compare.
   let response = client
     .get(GITHUB_LATEST_RELEASE_URL)
+    .header(reqwest::header::USER_AGENT, format!("ReQurv Launch/{current_version}"))
     .timeout(std::time::Duration::from_secs(10))
     .send()
     .await
@@ -2320,9 +2348,18 @@ mod tests {
     let entry = &catalog["models"][0];
     assert_eq!(entry["context_window"], 200_000);
     assert_eq!(entry["max_context_window"], 200_000);
-    assert_eq!(entry["input_modalities"], serde_json::json!(["text", "image", "video"]));
+    // Video is a Hive modality but not a codex one: the catalog drops it.
+    assert_eq!(entry["input_modalities"], serde_json::json!(["text", "image"]));
     assert_eq!(entry["default_reasoning_level"], "xhigh");
-    assert_eq!(entry["supported_reasoning_levels"], serde_json::json!(["xhigh", "medium", "low"]));
+    // The catalog schema requires {effort, description} objects, not strings.
+    assert_eq!(
+      entry["supported_reasoning_levels"],
+      serde_json::json!([
+        { "effort": "low", "description": "Fast responses with lighter reasoning" },
+        { "effort": "medium", "description": "Balances speed and reasoning depth for everyday tasks" },
+        { "effort": "xhigh", "description": "Extra high reasoning depth for complex problems" }
+      ])
+    );
   }
 
   #[test]

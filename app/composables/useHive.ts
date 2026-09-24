@@ -123,8 +123,13 @@ export function useHive() {
     checkingForUpdate.value = true
     try {
       updateInfo.value = await invoke<UpdateInfo>('check_for_updates')
-    } catch {
+    } catch (error) {
       // non critico: la verifica fallita non blocca l'uso dell'app
+      toast.add({
+        title: 'Verifica aggiornamenti non riuscita',
+        description: String(error),
+        color: 'warning'
+      })
     } finally {
       checkingForUpdate.value = false
     }
@@ -213,9 +218,7 @@ export function useHive() {
     // Hive (cloud Code tab bound to the claude.ai account). Hermes is
     // app-only: it has no CLI, so there is nothing to launch in a terminal.
     const appAvailable = service === 'claude_code' ? false : status.value?.[`${service}_app`] ?? false
-    const terminalAvailable = service === 'claude_code' || service === 'hermes'
-      ? false
-      : status.value?.[`${service}_cli`] ?? false
+    const terminalAvailable = service === 'hermes' ? false : status.value?.[`${service}_cli`] ?? false
     if (appAvailable && terminalAvailable) {
       launchTarget.value = service
       launchModalOpen.value = true
