@@ -1372,7 +1372,8 @@ const HERMES_DOWNLOAD_URL: &str = "https://hermes-ide.com/download";
 
 // The macOS bundle is named HERMES-IDE.app; match any *.app whose name
 // contains "hermes" (case-insensitive) so renames and product-name changes
-// keep working.
+// keep working. Outside macOS it is exercised by tests only.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn is_hermes_bundle(name: &str) -> bool {
   let lower = name.to_lowercase();
   lower.contains("hermes") && lower.ends_with(".app")
