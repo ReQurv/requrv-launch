@@ -12,8 +12,8 @@ const restoreConfigured = computed(
   () => props.id === 'codex' && (status.value?.codex_app ?? false) && (status.value?.codex_app_configured ?? false)
 )
 const appLabel = computed(() => (props.id === 'claude_code' ? 'Claude' : 'ChatGPT'))
-const restoreBody = computed(() =>
-  'Vengono recuperati config.toml e auth.json pre-Hive e ChatGPT tornerà a usare l\'account OpenAI.'
+const restoreBody = computed(
+  () => 'Vengono recuperati config.toml e auth.json pre-Hive e ChatGPT tornerà a usare l\'account OpenAI.'
 )
 const restoreModalOpen = ref(false)
 
@@ -32,7 +32,7 @@ const blockReason = computed<string | null>(() => {
 
 <template>
   <UCard
-    :class="canLaunch ? 'ring-1 ring-primary/25' : ''"
+    :class="[canLaunch ? 'ring-1 ring-primary/25' : '', 'size-80']"
     :ui="{ body: 'flex h-full flex-col gap-4' }"
   >
     <div class="flex items-center justify-between gap-3">
