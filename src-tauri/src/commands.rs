@@ -7,6 +7,9 @@ pub const HIVE_OPENAI_BASE_URL: &str = "https://hive.requrv.ai/api/v1";
 // Claude Code speaks the Anthropic Messages API and appends /v1/messages to
 // ANTHROPIC_BASE_URL, so the base is the gateway without the trailing /v1.
 pub const HIVE_ANTHROPIC_BASE_URL: &str = "https://hive.requrv.ai/api";
+// Le release pubbliche dell'app: la più recente è la candidata aggiornamento.
+pub const GITHUB_LATEST_RELEASE_URL: &str =
+  "https://api.github.com/repos/ReQurv/requrv-launch/releases/latest";
 
 const KEY_FILE_NAME: &str = "hive.json";
 
@@ -652,6 +655,44 @@ fn strip_jsonc_comments(input: &str) -> String {
   out
 }
 
+// JSONC allows trailing commas (e.g. `"a": 1,` right before `}` or `]`) but
+// strict serde_json rejects them. Drop any comma whose next non-whitespace
+// char is `}` or `]`, leaving string contents untouched. Runs after the
+// comment strip, so only strings and whitespace need handling.
+fn strip_trailing_commas(input: &str) -> String {
+  let chars: Vec<char> = input.chars().collect();
+  let mut out = String::with_capacity(input.len());
+  let mut in_string = false;
+  let mut i = 0;
+  while i < chars.len() {
+    let c = chars[i];
+    if in_string {
+      out.push(c);
+      if c == '\\' && i + 1 < chars.len() {
+        out.push(chars[i + 1]);
+        i += 1;
+      } else if c == '"' {
+        in_string = false;
+      }
+    } else if c == '"' {
+      in_string = true;
+      out.push(c);
+    } else if c == ',' {
+      let mut j = i + 1;
+      while j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+      }
+      if !(j < chars.len() && (chars[j] == '}' || chars[j] == ']')) {
+        out.push(c);
+      }
+    } else {
+      out.push(c);
+    }
+    i += 1;
+  }
+  out
+}
+
 // Merge the ReQurv Hive provider block and the default model into the global
 // opencode config, leaving every other field untouched.
 fn merge_hive_provider(config: &mut serde_json::Value, model: &str, key: &str) {
@@ -715,7 +756,7 @@ fn write_opencode_config_in(home: &Path, model: &str, key: &str) -> Result<PathB
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("json");
     let backup = path.with_extension(format!("{ext}.bak"));
     let _ = std::fs::write(&backup, raw.as_str());
-    let cleaned = strip_jsonc_comments(&raw);
+    let cleaned = strip_trailing_commas(&strip_jsonc_comments(&raw));
     serde_json::from_str(&cleaned).map_err(|e| {
       format!("{} non è un JSON valido: {e}. Correggi il file e riprova.", path.display())
     })?
@@ -1392,6 +1433,91 @@ fn spawn_cli(bin: &Path, args: &[String], env: &[(&str, &str)]) -> Result<(), St
   Ok(())
 }
 
+#[derive(Serialize, Clone)]
+pub struct UpdateInfo {
+  pub current_version: String,
+  pub latest_version: Option<String>,
+  pub update_available: bool,
+  pub release_url: Option<String>,
+}
+
+// Segmenti numerici di una versione semver ("0.1.3" -> [0, 1, 3]).
+// Restituisce None se un segmento non è numerico (tag male formattati).
+fn version_segments(version: &str) -> Option<Vec<u64>> {
+  version
+    .split('.')
+    .map(|part| part.parse::<u64>().ok())
+    .collect()
+}
+
+// True solo se `latest` è strettamente maggiore di `current`, confrontando i
+// segmenti da sinistra a destra. Le lunghezze diverse si completano con zero
+// ("1.2" == "1.2.0"). Versioni non parseabili non contano mai come novità:
+// un falso positivo mostrerebbe un banner di aggiornamento a vuoto.
+fn is_newer_version(latest: &str, current: &str) -> bool {
+  let Some(latest) = version_segments(latest) else {
+    return false;
+  };
+  let Some(current) = version_segments(current) else {
+    return false;
+  };
+  if latest.is_empty() || current.is_empty() {
+    return false;
+  }
+  for i in 0..latest.len().max(current.len()) {
+    let l = latest.get(i).copied().unwrap_or(0);
+    let c = current.get(i).copied().unwrap_or(0);
+    if l != c {
+      return l > c;
+    }
+  }
+  false
+}
+
+// Confronta la versione installata con la release più recente di GitHub.
+// L'avviso è solo informativo: l'utente scarica la release dalla pagina
+// collegata, senza auto-update.
+#[tauri::command]
+pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+  let current_version = app.package_info().version.to_string();
+  let client = reqwest::Client::new();
+  let response = client
+    .get(GITHUB_LATEST_RELEASE_URL)
+    .timeout(std::time::Duration::from_secs(10))
+    .send()
+    .await
+    .map_err(|e| format!("Impossibile verificare gli aggiornamenti: {e}"))?;
+
+  let status = response.status();
+  if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+    return Err("Verifica aggiornamenti non disponibile al momento (limiti di GitHub).".into());
+  }
+  if !status.is_success() {
+    return Err(format!("Verifica aggiornamenti non riuscita (stato {status})."));
+  }
+
+  let body: serde_json::Value = response
+    .json()
+    .await
+    .map_err(|e| format!("Risposta non valida da GitHub: {e}"))?;
+
+  // tag_name è nel formato "v0.1.3": si confronta senza il prefisso "v".
+  let tag = body.get("tag_name").and_then(|t| t.as_str()).unwrap_or_default();
+  let latest_version = tag.strip_prefix('v').unwrap_or(tag).to_string();
+  let update_available = is_newer_version(&latest_version, &current_version);
+  let release_url = body
+    .get("html_url")
+    .and_then(|u| u.as_str())
+    .map(|u| u.to_string());
+
+  Ok(UpdateInfo {
+    current_version,
+    latest_version: (!latest_version.is_empty()).then_some(latest_version),
+    update_available,
+    release_url,
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1559,6 +1685,25 @@ mod tests {
     assert_eq!(value["url"], "https://x.ai/y");
   }
 
+  // Le virgole finali sono consentite in JSONC (formato di opencode) ma
+  // rifiutate da serde_json: vanno rimosse fuori dalle stringhe, mentre una
+  // `,}` dentro una stringa resta intatta.
+  #[test]
+  fn strips_trailing_commas_outside_strings() {
+    let input = r#"{
+  "mcp": {
+    "nuxt": { "enabled": true, },
+  },
+  "list": [ "a", "b", ],
+  "tricky": "x,} y,] z",
+}"#;
+    let cleaned = strip_trailing_commas(&strip_jsonc_comments(input));
+    let value: serde_json::Value = serde_json::from_str(&cleaned).expect("parsable");
+    assert_eq!(value["mcp"]["nuxt"]["enabled"], true);
+    assert_eq!(value["list"][1], "b");
+    assert_eq!(value["tricky"], "x,} y,] z");
+  }
+
   #[test]
   fn merge_creates_provider_block_in_empty_config() {
     let mut config = serde_json::json!({});
@@ -1639,6 +1784,35 @@ mod tests {
     let backup = dir.join("opencode.jsonc.bak");
     let backed = std::fs::read_to_string(&backup).expect("backup exists");
     assert!(backed.contains("commento"));
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  // Caso reale: una config JSONC piena di virgole finali (es. blocco mcp) che
+  // prima bloccava l'avvio. Deve essere letta, il provider fuso e il file
+  // riscritto come JSON valido, preservando i campi esterni.
+  #[test]
+  fn writes_opencode_config_with_trailing_commas() {
+    let tmp = std::env::temp_dir().join(format!("requrv-launch-test-write-tc-{}", std::process::id()));
+    let dir = tmp.join(".config").join("opencode");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let existing = r#"{
+  "mcp": {
+    "nuxt": {
+      "type": "remote",
+      "url": "https://nuxt.com/mcp",
+      "enabled": true,
+    },
+  },
+}"#;
+    std::fs::write(dir.join("opencode.jsonc"), existing).expect("write jsonc");
+
+    let path = write_opencode_config_in(&tmp, "requrv-small-3.8", "requrv_sk_test").expect("write");
+    let rendered = std::fs::read_to_string(&path).expect("read back");
+    let value: serde_json::Value = serde_json::from_str(&rendered).expect("valid json");
+    assert_eq!(value["mcp"]["nuxt"]["url"], "https://nuxt.com/mcp");
+    assert_eq!(value["mcp"]["nuxt"]["enabled"], true);
+    assert_eq!(value["provider"]["requrv-hive"]["options"]["apiKey"], "requrv_sk_test");
+    assert_eq!(value["model"], "requrv-hive/requrv-small-3.8");
     let _ = std::fs::remove_dir_all(&tmp);
   }
 
@@ -1881,5 +2055,28 @@ mod tests {
 
     assert_eq!(std::fs::read_to_string(dir.join("auth.json")).expect("auth kept"), foreign_auth);
     let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  // Confronto versioni per il check di aggiornamento: nessun falso positivo
+  // su versioni uguali, precedenti o male formattati.
+  #[test]
+  fn version_comparison_detects_newer_releases() {
+    assert!(!is_newer_version("0.1.3", "0.1.3"));
+    assert!(is_newer_version("0.1.4", "0.1.3"));
+    assert!(is_newer_version("0.2.0", "0.1.9"));
+    assert!(is_newer_version("1.0.0", "0.9.9"));
+    assert!(!is_newer_version("0.1.2", "0.1.3"));
+    assert!(!is_newer_version("0.0.9", "0.1.0"));
+    assert!(is_newer_version("0.10.0", "0.9.9"));
+  }
+
+  #[test]
+  fn version_comparison_handles_uneven_and_invalid_versions() {
+    assert!(!is_newer_version("1.2", "1.2.0"));
+    assert!(is_newer_version("1.2.1", "1.2"));
+    assert!(!is_newer_version("0.1.4-beta", "0.1.3"));
+    assert!(!is_newer_version("", "0.1.3"));
+    assert!(!is_newer_version("0.1.3", ""));
+    assert!(!is_newer_version("non-a-versione", "0.1.3"));
   }
 }

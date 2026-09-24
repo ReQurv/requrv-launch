@@ -1,6 +1,10 @@
 <script setup>
+import { getVersion } from '@tauri-apps/api/app'
+
 const hive = useHive()
-const { keySaved, keyModalOpen, selectedModel, chatModelIds } = hive
+const { keySaved, keyModalOpen, selectedModel, chatModelIds, updateInfo, updateDismissed } = hive
+
+const appVersion = ref('')
 
 useHead({
   meta: [{ name: 'viewport', content: 'width=device-width, initial-scale=1' }],
@@ -22,8 +26,16 @@ useSeoMeta({
 })
 
 onMounted(async () => {
+  if (hive.isTauri.value) {
+    try {
+      appVersion.value = await getVersion()
+    } catch {
+      // versione non leggibile: ignora
+    }
+  }
   await hive.loadSavedKey()
   hive.refreshStatus()
+  hive.checkForUpdates()
   if (!keySaved.value) {
     keyModalOpen.value = true
   }
@@ -104,6 +116,32 @@ onMounted(async () => {
         </template>
       </UHeader>
 
+      <UContainer
+        v-if="updateInfo?.update_available && !updateDismissed"
+        class="mt-2"
+      >
+        <UAlert
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-arrow-up-circle"
+          orientation="horizontal"
+          title="Nuova versione disponibile"
+          :description="`Scarica e avvia l'ultima release (v${updateInfo.latest_version}) per aggiornare ReQurv Launch.`"
+          :actions="[
+            {
+              label: 'Scarica',
+              icon: 'i-lucide-download',
+              size: 'xs',
+              color: 'warning',
+              variant: 'solid',
+              onClick: () => updateInfo?.release_url && hive.openExternal(updateInfo.release_url)
+            }
+          ]"
+          close
+          @update:open="updateDismissed = true"
+        />
+      </UContainer>
+
       <UMain class="flex-1 min-h-0">
         <NuxtPage />
       </UMain>
@@ -121,6 +159,15 @@ onMounted(async () => {
             >
               AI Hive
             </button>
+          </p>
+        </template>
+
+        <template #right>
+          <p
+            v-if="appVersion"
+            class="text-xs text-dimmed"
+          >
+            v{{ appVersion }}
           </p>
         </template>
       </UFooter>

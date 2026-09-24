@@ -20,6 +20,13 @@ export interface AppRestartResult {
   restart_required: boolean
 }
 
+export interface UpdateInfo {
+  current_version: string
+  latest_version: string | null
+  update_available: boolean
+  release_url: string | null
+}
+
 export interface HiveModel {
   id: string
   model_type: string
@@ -84,6 +91,9 @@ const restartModalOpen = ref(false)
 const restartTarget = ref<ServiceId | null>(null)
 const restarting = ref(false)
 const restoring = ref(false)
+const updateInfo = ref<UpdateInfo | null>(null)
+const checkingForUpdate = ref(false)
+const updateDismissed = ref(false)
 
 export function useHive() {
   const toast = useToast()
@@ -97,6 +107,18 @@ export function useHive() {
       // stato non determinante: mantieni i valori attuali
     } finally {
       refreshing.value = false
+    }
+  }
+
+  async function checkForUpdates() {
+    if (!isTauri.value || checkingForUpdate.value) return
+    checkingForUpdate.value = true
+    try {
+      updateInfo.value = await invoke<UpdateInfo>('check_for_updates')
+    } catch {
+      // non critico: la verifica fallita non blocca l'uso dell'app
+    } finally {
+      checkingForUpdate.value = false
     }
   }
 
@@ -329,9 +351,13 @@ export function useHive() {
     restartTarget,
     restarting,
     restoring,
+    updateInfo,
+    checkingForUpdate,
+    updateDismissed,
     chatModels,
     chatModelIds,
     refreshStatus,
+    checkForUpdates,
     loadSavedKey,
     saveKey,
     clearKey,

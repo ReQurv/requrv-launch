@@ -24,7 +24,8 @@ pub fn run() {
       commands::configure_chatgpt_app,
       commands::open_chatgpt_app,
       commands::restart_chatgpt_app,
-      commands::restore_chatgpt_app
+      commands::restore_chatgpt_app,
+      commands::check_for_updates
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
