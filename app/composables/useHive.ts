@@ -1,19 +1,21 @@
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
-export type ServiceId = 'opencode' | 'codex' | 'claude_code'
+export type ServiceId = 'opencode' | 'codex' | 'claude_code' | 'hermes'
 export type LaunchMode = 'app' | 'terminal'
 
 export interface ServiceStatus {
   opencode: boolean
   codex: boolean
   claude_code: boolean
+  hermes: boolean
   opencode_app: boolean
   opencode_cli: boolean
   codex_app: boolean
   codex_cli: boolean
   codex_app_configured: boolean
   claude_code_cli: boolean
+  hermes_app: boolean
 }
 
 export interface AppRestartResult {
@@ -58,6 +60,12 @@ export const SERVICE_META: Record<
     description: 'CLI di coding di Anthropic. Si avvia nel terminale puntato ad AI Hive (npm install -g @anthropic-ai/claude-code).',
     icon: 'i-simple-icons-claudecode',
     downloadUrl: 'https://claude.com/product/claude-code'
+  },
+  hermes: {
+    title: 'Hermes',
+    description: 'IDE di coding con Agent su AI Hive: la configurazione passa come variabili d\'ambiente del processo, senza file di configurazione.',
+    icon: 'i-simple-icons-hermes',
+    downloadUrl: 'https://hermes-ide.com/download'
   }
 }
 
@@ -202,9 +210,12 @@ export function useHive() {
     if (!key.value.trim() || !selectedModel.value || launching.value) return
     await refreshStatus()
     // Claude Code is terminal-only: Claude Desktop cannot be pointed at AI
-    // Hive (cloud Code tab bound to the claude.ai account).
+    // Hive (cloud Code tab bound to the claude.ai account). Hermes is
+    // app-only: it has no CLI, so there is nothing to launch in a terminal.
     const appAvailable = service === 'claude_code' ? false : status.value?.[`${service}_app`] ?? false
-    const terminalAvailable = status.value?.[`${service}_cli`] ?? false
+    const terminalAvailable = service === 'claude_code' || service === 'hermes'
+      ? false
+      : status.value?.[`${service}_cli`] ?? false
     if (appAvailable && terminalAvailable) {
       launchTarget.value = service
       launchModalOpen.value = true
@@ -240,6 +251,26 @@ export function useHive() {
         await refreshStatus()
         return
       }
+      if (service === 'hermes') {
+        // Hermes non ha file di configurazione: la configurazione viaggia solo
+        // nelle variabili d'ambiente del processo appena avviato. Un'istanza
+        // già aperta non può riceverle, quindi si chiede il riavvio.
+        const result = await invoke<AppRestartResult>('launch_hermes_app', {
+          model: selectedModel.value,
+          key: key.value.trim()
+        })
+        if (result.restart_required) {
+          restartTarget.value = 'hermes'
+          restartModalOpen.value = true
+        } else {
+          toast.add({
+            title: 'Hermes avviato su AI Hive',
+            color: 'success'
+          })
+        }
+        await refreshStatus()
+        return
+      }
       await invoke('launch_service', {
         service,
         model: selectedModel.value,
@@ -266,11 +297,18 @@ export function useHive() {
   async function confirmRestart() {
     const service = restartTarget.value
     restartModalOpen.value = false
-    if (!service || service !== 'codex') return
+    if (!service || (service !== 'codex' && service !== 'hermes')) return
     const label = APP_LABELS[service] ?? SERVICE_META[service].title
     restarting.value = true
     try {
-      await invoke('restart_chatgpt_app')
+      if (service === 'codex') {
+        await invoke('restart_chatgpt_app')
+      } else {
+        await invoke('restart_hermes_app', {
+          model: selectedModel.value,
+          key: key.value.trim()
+        })
+      }
       toast.add({
         title: `${label} riavviato con AI Hive`,
         color: 'success'

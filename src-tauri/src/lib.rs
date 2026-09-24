@@ -25,6 +25,8 @@ pub fn run() {
       commands::open_chatgpt_app,
       commands::restart_chatgpt_app,
       commands::restore_chatgpt_app,
+      commands::launch_hermes_app,
+      commands::restart_hermes_app,
       commands::check_for_updates
     ])
     .run(tauri::generate_context!())

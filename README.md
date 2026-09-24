@@ -20,6 +20,7 @@ ReQurv Launch is a desktop application that launches your AI coding agents pre-c
 - [OpenCode](https://opencode.ai) — coding IDE (on macOS both the desktop app and the CLI are supported, elsewhere the CLI)
 - [Codex](https://chatgpt.com/codex) — OpenAI's coding CLI (on macOS the ChatGPT app is also supported)
 - [Claude Code](https://claude.com/product/claude-code) — Anthropic's coding agent (CLI)
+- [Hermes](https://hermes-ide.com) — coding IDE whose Agent mode runs on the Claude Agent SDK (desktop app)
 
 ## Features
 
@@ -32,6 +33,7 @@ ReQurv Launch is a desktop application that launches your AI coding agents pre-c
   - **Codex (terminal)**: creates a dedicated profile (`~/.codex/hive.config.toml`) with `wire_api = "responses"` and launches the CLI with `--profile hive` and the `HIVE_API_KEY` variable
   - **ChatGPT.app (app, macOS only)**: points `~/.codex/config.toml` at AI Hive through a dedicated `requrv-hive` provider (`base_url`, `wire_api = "responses"`, key included; no WebSocket, which the gateway does not support) plus a model catalog in `~/.codex/hive-models.json`, and saves the key in `~/.codex/auth.json` in apikey mode; the original files are backed up as `.hive.bak` and can be restored with one click from the "Restore ChatGPT" button. The model catalog is read at startup, so if the app is already open a restart is requested
   - **Claude Code (terminal)**: launches the CLI pointed at AI Hive using environment variables only (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`), without touching `~/.claude`; first verifies that the gateway exposes the `/messages` endpoint (Anthropic Messages API). (The Code tab of Claude Desktop is not supported: in consumer versions it is bound to the claude.ai account and cannot use an external gateway)
+  - **Hermes (app)**: launches the app with the AI Hive configuration passed as environment variables only (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`), without writing any configuration file; first verifies that the gateway exposes the `/messages` endpoint (Anthropic Messages API). Since the environment only applies to the launched process, if an instance is already open a restart is requested
 
 On macOS the agents are TUI applications: the launch opens a script in the system terminal, providing a real TTY.
 

@@ -79,7 +79,7 @@ Each existing connector shows a proven pattern — pick the one that fits the ne
 | ------- | ------- | ----------- |
 | **Persistent config, merged** | OpenCode | The agent has a global JSON/JSONC config; add a provider entry while preserving existing fields (strip JSONC comments, keep a backup) |
 | **Dedicated profile** | Codex CLI | The agent supports profiles: write a separate `hive.config.toml` + launch flag (`--profile hive`), never touch the user's main config |
-| **Env vars only** | Claude Code | The agent is fully configurable via environment variables: launch with `ANTHROPIC_*`/`*_BASE_URL` + key + model, no files written |
+| **Env vars only** | Claude Code, Hermes | The agent is fully configurable via environment variables: launch with `ANTHROPIC_*`/`*_BASE_URL` + key + model, no files written. Desktop-app variant (Hermes): the env lives only in the launched process, so an already-running instance needs a confirmed restart (frontend-driven commands, like ChatGPT.app) |
 | **Full app config rewrite** | ChatGPT.app | A desktop app whose config you rewrite (root `model`, `model_provider`, bearer token), with one-shot `.bak` backups, a restore command and a restart flow (config read at startup) |
 
 Rules that apply to every strategy:
@@ -92,7 +92,7 @@ Rules that apply to every strategy:
 ### 2. Rust backend (`src-tauri/src/commands.rs`)
 
 1. **Detection** — extend `check_services()` (and the `ServiceStatus` struct) with a `<agent>_cli` / `<agent>_app` field. Reuse the existing resolvers: `find_npm()`, the nvm/Volta/Homebrew/registry PATH handling, and the per-OS path helpers.
-2. **Launch** — extend `launch_service()` with a branch for the new `service` id, implementing the strategy from step 1. Errors are `String` and **in Italian** (they surface directly in the UI).
+2. **Launch** — extend `launch_service()` with a branch for the new `service` id, implementing the strategy from step 1. Errors are `String` and **in Italian** (they surface directly in the UI). Exception: if the flow needs a restart confirmation, add dedicated `#[tauri::command]`s (e.g. `launch_<agent>_app` / `restart_<agent>_app`) and drive them from the frontend — `launch_service` must NOT route that `service`/mode pair (see the ChatGPT.app and Hermes flows).
 3. **Register** — if you add new `#[tauri::command]`s (e.g. a restore command), register them in the `invoke_handler` list in `src-tauri/src/lib.rs`.
 
 ### 3. Frontend
