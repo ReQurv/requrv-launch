@@ -1,10 +1,22 @@
 <template>
   <UPageSection id="agents">
-    <div class="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
-      <ServiceCard id="opencode" />
-      <ServiceCard id="codex" />
-      <ServiceCard id="claude_code" />
-      <ServiceCard id="hermes" />
+    <div class="mt-5 flex flex-wrap gap-5">
+      <ServiceCard
+        id="opencode"
+        class="min-w-[280px] flex-1"
+      />
+      <ServiceCard
+        id="codex"
+        class="min-w-[280px] flex-1"
+      />
+      <ServiceCard
+        id="claude_code"
+        class="min-w-[280px] flex-1"
+      />
+      <ServiceCard
+        id="hermes"
+        class="min-w-[280px] flex-1"
+      />
     </div>
   </UPageSection>
 </template>
